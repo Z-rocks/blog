@@ -150,6 +150,7 @@ npm run dev
 | ------ | ------------------------------------------ | ---- | ------------------------------------------------- |
 | POST   | `/api/auth/login`                          | 公开 | `{ username, password }` → `{ token, expiresIn }` |
 | GET    | `/api/posts?page=1&pageSize=10&tag=NestJS` | 公开 | 仅已发布；标签为完整、区分大小写的匹配            |
+| GET    | `/api/posts/tags`                          | 公开 | 全站已发布标签，升序去重；供前台标签栏使用        |
 | GET    | `/api/posts/:id`                           | 公开 | 仅已发布；草稿与不存在均 404                      |
 | GET    | `/api/admin/posts`                         | JWT  | 全部状态的列表，同样分页且不含正文                |
 | GET    | `/api/admin/posts/:id`                     | JWT  | 编辑时读取完整正文，包括草稿                      |
@@ -171,16 +172,29 @@ npm run dev
 
 `status` 仅允许 `draft` 或 `published`；PUT 必须提供全部五个字段。全局 ValidationPipe 拒绝未声明字段、非法分页与错误类型。所有写接口都由后端校验 JWT，前端路由守卫仅改善体验，不能替代接口鉴权。
 
-## 类型与构建检查
+## 类型、构建与测试
 
 ```bash
 npm run typecheck --prefix backend
 npm run build --prefix backend
+npm test --prefix backend          # 接口测试，需要可连的 MySQL
 npm run typecheck --prefix frontend
 npm run build --prefix frontend
 ```
 
-产物分别是 `backend/dist/` 与 `frontend/dist/`，不入 Git。项目当前以手工验收清单覆盖核心链路（自动化测试在规划中，见下）。
+产物分别是 `backend/dist/` 与 `frontend/dist/`，不入 Git。
+
+后端接口测试用 Jest + supertest 跑在**真实 MySQL** 上而不是 mock —— 草稿是否泄露、列表是否夹带正文，这类判断发生在 SQL 里，mock 掉仓储就正好绕过了要守的那一段。覆盖范围：草稿 / 发布隔离、列表不返回 `content`、标签完整匹配、标签聚合不受分页影响、无 token 与伪造 token 的 401、DTO 校验（缺字段 / 多余字段 / 非法枚举 / 超限分页）、以及新建 → 发布 → 删除的完整流转。
+
+测试库需要先存在（`DB_SYNC` 只建表不建库）：
+
+```bash
+mysql -u root -e "CREATE DATABASE IF NOT EXISTS blog_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+```
+
+连接参数默认 `127.0.0.1:3306` / `root` / 空密码 / `blog_test`，可用 `TEST_DB_HOST`、`TEST_DB_PORT`、`TEST_DB_USER`、`TEST_DB_PASSWORD`、`TEST_DB_NAME` 覆盖。测试进程注入的环境变量优先于 `backend/.env`，因此**测试不会连到开发库 `blog`**。表结构由 TypeORM 按实体同步，不额外维护一份 DDL。CI 会在发布前自动跑这套测试，不通过不会部署。
+
+其余状态与边界仍由下面的手工清单覆盖。
 
 ### 手工验收清单
 
@@ -205,7 +219,7 @@ npm run build --prefix frontend
 
 ## 部署与运维
 
-线上通过 **GitHub Actions 持续部署**：推送 `main` 分支即自动完成"两端类型检查 → 构建 → 上传 → 服务器原子切换 → 健康检查 → 公网验收"，任意一步失败不会影响线上版本（定义见 [.github/workflows/deploy.yml](.github/workflows/deploy.yml)）。同一时间只允许一个发布流程（concurrency 排队），部署历史可在仓库的 Actions 页面查看。
+线上通过 **GitHub Actions 持续部署**：推送 `main` 先跑 `test` job（两端类型检查与构建 + 后端接口测试，跑在 MySQL 8 service container 上），通过后才进入 `deploy` job（上传 → 服务器构建 → 原子切换 → 健康检查 → 公网验收）。任意一步失败都不会影响线上版本（定义见 [.github/workflows/deploy.yml](.github/workflows/deploy.yml)）。同一时间只允许一个发布流程（concurrency 排队），部署历史可在仓库的 Actions 页面查看。
 
 服务器侧沿用"版本目录 + 软链接"布局：`/var/www/devlog-releases/<版本ID>/` 存每个版本，`/var/www/devlog` 为指向当前版本的软链接，Nginx 与 systemd 只认该路径；发布与回滚由服务器脚本 `/usr/local/lib/devlog-remote.sh` 完成（每次部署随仓库更新），健康检查失败自动切回上一版本。
 
@@ -224,7 +238,7 @@ npm run build --prefix frontend
 
 ## 后续规划
 
-- 自动化测试：后端接口（supertest）与前端关键路径（Vitest + Testing Library）。
+- 前端关键路径测试（Vitest + Testing Library）；后端接口测试已落地，继续补并发与边界用例。
 - HTTPS 与域名：域名备案完成后启用 Let's Encrypt 证书与 HSTS。
 - SEO：meta description、Open Graph、sitemap 与文章页预渲染。
 - RSS 订阅与文章图床（对象存储直传，不经过应用服务器）。

@@ -45,12 +45,29 @@ CREATE TABLE post (
   updatedAt DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
     ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (id),
-  INDEX IDX_post_status_created_id (status, createdAt, id)
+  INDEX IDX_post_status_created_id (status, createdAt, id),
+  INDEX IDX_post_created_id (createdAt, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE USER 'blog_app'@'127.0.0.1' IDENTIFIED BY 'REPLACE_WITH_STRONG_DB_PASSWORD';
 GRANT SELECT, INSERT, UPDATE, DELETE ON blog.* TO 'blog_app'@'127.0.0.1';
 ```
+
+两条索引对应两种列表查询：`IDX_post_status_created_id` 服务前台（`status` 等值过滤后按 `createdAt, id` 降序），`IDX_post_created_id` 服务后台（不过滤状态但排序方式相同，`status` 前导的索引在这里用不上，会退化成 filesort）。
+
+**已有库的增量变更**（新库可跳过）：
+
+```sql
+ALTER TABLE post ADD INDEX IDX_post_created_id (createdAt, id);
+```
+
+文章量上来之后，如果标签筛选成为慢查询，可以再加一条多值索引让 `JSON_CONTAINS` 走索引（需 MySQL 8.0.17+）：
+
+```sql
+ALTER TABLE post ADD INDEX IDX_post_tags_multi ((CAST(tags AS CHAR(30) ARRAY)));
+```
+
+注意这条索引**无法在 `post.entity.ts` 里声明**：TypeORM 不支持多值索引表达式，本地 `DB_SYNC=true` 同步表结构时不会创建它，也不会主动删除它。因此它属于"生产库手工维护"的范畴，代码仓库里只需记住这条 SQL。没有它时标签筛选仍然正确，只是 MySQL 需要沿索引顺序多读一些行再逐行判断 `JSON_CONTAINS`。
 
 SQL 对应当前 `post.entity.ts`。以后变更实体时，先备份、在测试库验证增量 SQL，再手工执行；这里没有自动迁移，也没有导入 / 种子脚本。
 
@@ -135,6 +152,7 @@ CSP 不允许任何远程脚本、样式或字体（站点使用系统字体回�
 - [ ] `/`、`/blog`、文章详情与登录页正常，移动端无横向溢出。
 - [ ] 直接刷新前端深链接不返回 Nginx 404。
 - [ ] `/api/posts` 返回统一分页响应，列表无 content。
+- [ ] `/api/posts/tags` 只返回已发布文章的标签，草稿标签不出现。
 - [ ] 无 token 请求 `/api/admin/posts` 为 401。
 - [ ] 新建草稿不公开，发布可见，修改 / 转草稿 / 删除按预期生效。
 - [ ] 非法 DTO 为 400，未知文章为 404，后端错误不泄露 SQL / 堆栈。
@@ -144,13 +162,28 @@ CSP 不允许任何远程脚本、样式或字体（站点使用系统字体回�
 
 ## 7. 备份、更新与回滚
 
-> **CI/CD**：推送 main 即由 GitHub Actions 自动发布（类型检查 → 构建 → 上传 → 原子切换 → 健康检查 → 公网验收）；本节流程保留为手动通道与紧急恢复手段。
+> **CI/CD**：推送 main 即由 GitHub Actions 自动发布。流水线分两个 job：`test`（后端类型检查 → 构建 → 接口测试，前端类型检查 → 构建）通过后才进入 `deploy`（上传 → 服务器构建 → 原子切换 → 健康检查 → 公网验收）。接口测试跑在 MySQL 8 service container 上，覆盖草稿隔离、列表不带正文、鉴权与校验等契约；**测试不过就不会发布**。本节流程保留为手动通道与紧急恢复手段。
 
 - 数据是 MySQL 中的文章；`docs/` 是独立的手写草稿，不等价于数据库备份。
 - 定期用 `mysqldump --single-transaction` 做备份，使用交互密码提示或受限凭据文件，避免命令行明文密码。备份加密保存在服务器外，并定期在测试库验证恢复。
 - 更新前保留上一版构建产物并备份数据库。先检查类型和构建，再替换前端 dist、后端 dist 并重启服务；推荐在服务器上使用版本目录与软链接完成原子切换（不改变仓库结构）。
 - 数据库结构变更单独记录增量 SQL，避免直接用旧代码覆盖新结构。回滚代码不代表能回滚数据。
 - 更改 JWT_SECRET 会使旧 token 失效，需要重新登录；更改管理员密码不会自动吊销已发出的 JWT。
+
+### 凭据轮换
+
+`backend/.env` 里的三份凭据都是明文存放在工作目录。它们不进 Git、也不进部署包（`deploy.sh` 与 CI 都排除 `.env`），但只要这个目录曾经被打包、同步到网盘或分享给他人，就应当视为已泄露并轮换：
+
+| 凭据                | 轮换方式                                                                  | 影响                                                             |
+| ------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `JWT_SECRET`        | `openssl rand -hex 32`，替换后重启服务                                     | 已签发的 token 立即失效，需要重新登录；不影响任何数据             |
+| `ADMIN_PASSWORD_HASH` | `npm run hash-password --prefix backend` 生成新哈希                      | 下次登录用新密码；**旧 token 仍然有效**（没有服务端会话或撤销名单） |
+| `DB_PASSWORD`       | `ALTER USER 'blog_app'@'127.0.0.1' IDENTIFIED BY '<新密码>';` 再更新 `.env` | 数据库与配置要一起改并重启，顺序错会让服务起不来                  |
+
+两个容易踩的点：
+
+- 轮换 `JWT_SECRET` 时别忘了服务器上的 `backend/.env` —— 部署脚本会从上一个版本继承 `.env`，不会用仓库里的值覆盖它，只改本地等于没改。
+- 不要在命令行里直接写明文密码（会进 shell history）；`ALTER USER` 用交互式登录后执行。
 
 ### 脚本化部署与回滚
 
