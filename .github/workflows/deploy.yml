@@ -17,6 +17,9 @@ permissions:
 env:
   SSH_HOST: ${{ secrets.SSH_HOST }}
   SSH_USER: ${{ secrets.SSH_USER }}
+  # 公网验收地址。后台子域名上线后 HTTP 只做跳转或直接断开，
+  # 验收必须走 HTTPS 的正式域名，不能再用 http://<IP>/。
+  PUBLIC_URL: ${{ vars.PUBLIC_URL || 'https://zrocks.me/' }}
 
 jobs:
   # 发布前的门禁。类型检查和构建只能证明"能编译",证明不了"行为还对":
@@ -111,8 +114,8 @@ jobs:
 
       - name: 公网验收
         run: |
-          code=$(curl -s -o /dev/null -w '%{http_code}' -m 15 "http://$SSH_HOST/")
-          echo "首页 HTTP $code"
+          code=$(curl -sL -o /dev/null -w '%{http_code}' -m 20 "$PUBLIC_URL")
+          echo "$PUBLIC_URL -> HTTP $code"
           [ "$code" = "200" ] || { echo "公网验收失败"; exit 1; }
 
       - name: 发布摘要

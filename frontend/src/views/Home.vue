@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { getPosts } from "../api/post";
-import { getToken } from "../api/request";
 import { profile, projects } from "../data/projects";
 import type { PostSummary } from "../types";
 
-const loggedIn = ref<boolean>(!!getToken());
 const posts = ref<PostSummary[]>([]);
 const loading = ref<boolean>(true);
 const error = ref<string>("");
@@ -66,8 +64,6 @@ onMounted(loadPosts);
             >探索我的作品 <span aria-hidden="true">↗</span></RouterLink
           ><RouterLink class="button text-button" to="/blog"
             >阅读技术文章 <span aria-hidden="true">→</span></RouterLink
-          ><RouterLink v-if="!loggedIn" class="hero-login" to="/login"
-            >管理登录</RouterLink
           >
         </div>
         <div class="hero-stack">
@@ -306,7 +302,6 @@ onMounted(loadPosts);
           <strong>好文章，从第一次记录开始。</strong>
           <p>这里还没有已发布的文章，第一篇思考正在酝酿。</p>
         </div>
-        <RouterLink class="button small" to="/login">写下第一篇 ↗</RouterLink>
       </div>
       <div v-else class="article-list">
         <RouterLink
