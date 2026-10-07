@@ -26,6 +26,13 @@ export class PostController {
     return this.service.list(query, true);
   }
 
+  // 必须声明在 @Get(":id") 之前:否则 "tags" 会被 :id 捕获并撞上 ParseIntPipe 变成 400。
+  @Public()
+  @Get("tags")
+  listTags(): Promise<string[]> {
+    return this.service.listPublishedTags();
+  }
+
   @Public()
   @Get(":id")
   detail(@Param("id", ParseIntPipe) id: number): Promise<Post> {

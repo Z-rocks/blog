@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { getPosts } from "../api/post";
+import { getPostTags, getPosts } from "../api/post";
 import type { PageResult, PostSummary } from "../types";
 
 const route = useRoute();
 const router = useRouter();
+// 与后端 backend/src/post/dto/post-query.dto.ts 的 MAX_PAGE 保持一致。
+const MAX_PAGE: number = 1000;
 const result = ref<PageResult<PostSummary>>({
   items: [],
   total: 0,
@@ -15,10 +17,13 @@ const result = ref<PageResult<PostSummary>>({
 const loading = ref<boolean>(true);
 const error = ref<string>("");
 const tagInput = ref<string>("");
+// 标签栏来自独立的聚合接口,不再从当前页文章上现取——否则翻页会换掉整排标签,
+// 筛选之后又会把其余标签全部藏起来,用户没法换一个标签继续筛。
+const allTags = ref<string[]>([]);
 let requestVersion: number = 0;
 const page = computed<number>(() => {
   const value: number = Number(route.query.page || 1);
-  return Number.isInteger(value) && value >= 1 && value <= 1000000 ? value : 1;
+  return Number.isInteger(value) && value >= 1 && value <= MAX_PAGE ? value : 1;
 });
 const selectedTag = computed<string>(() =>
   typeof route.query.tag === "string" ? route.query.tag.trim() : "",
@@ -26,11 +31,19 @@ const selectedTag = computed<string>(() =>
 const pages = computed<number>(() =>
   Math.max(1, Math.ceil(result.value.total / result.value.pageSize)),
 );
-const tags = computed<string[]>(() => [
-  ...new Set(
-    result.value.items.flatMap((post: PostSummary): string[] => post.tags),
-  ),
-]);
+// 手输一个还没有文章的标签时,也要把它显示成可以点掉的当前项。
+const tagChips = computed<string[]>(() =>
+  selectedTag.value && !allTags.value.includes(selectedTag.value)
+    ? [selectedTag.value, ...allTags.value]
+    : allTags.value,
+);
+async function loadTags(): Promise<void> {
+  try {
+    allTags.value = await getPostTags();
+  } catch {
+    // 标签栏只是筛选辅助入口,取不到时留空即可,不影响文章列表本身。
+  }
+}
 async function loadPosts(): Promise<void> {
   const version: number = ++requestVersion;
   loading.value = true;
@@ -65,6 +78,9 @@ function filterTag(): void {
 function formatDate(value: string): string {
   return new Date(value).toLocaleDateString("zh-CN").replaceAll("/", ".");
 }
+onMounted((): void => {
+  void loadTags();
+});
 watch(() => [route.query.page, route.query.tag], loadPosts, {
   immediate: true,
 });
@@ -86,21 +102,14 @@ watch(() => [route.query.page, route.query.tag], loadPosts, {
         >
           全部文章</button
         ><button
-          v-if="selectedTag"
-          class="filter-chip selected"
-          @click="navigate(1, '')"
+          v-for="tag in tagChips"
+          :key="tag"
+          class="filter-chip"
+          :class="{ selected: selectedTag === tag }"
+          @click="navigate(1, tag)"
         >
-          # {{ selectedTag }} <span aria-label="清除筛选">×</span></button
-        ><template v-else
-          ><button
-            v-for="tag in tags.slice(0, 4)"
-            :key="tag"
-            class="filter-chip"
-            @click="navigate(1, tag)"
-          >
-            # {{ tag }}
-          </button></template
-        >
+          # {{ tag }}
+        </button>
       </div>
       <form class="tag-filter" @submit.prevent="filterTag">
         <label for="tag-filter">按标签筛选</label
@@ -149,8 +158,8 @@ watch(() => [route.query.page, route.query.tag], loadPosts, {
         class="button"
         @click="navigate(1, '')"
       >
-        查看全部文章 →</button
-      ><RouterLink v-else class="button" to="/login">管理登录 ↗</RouterLink>
+        查看全部文章 →
+      </button>
     </div>
     <div v-else class="blog-list">
       <article v-for="post in result.items" :key="post.id" class="blog-entry">

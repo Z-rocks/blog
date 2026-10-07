@@ -15,6 +15,10 @@ export async function getPosts(
   return (await request.get<PageResult<PostSummary>>("/posts", { params }))
     .data;
 }
+// 全站已发布标签。标签栏用它,而不是从当前页文章上现取。
+export async function getPostTags(): Promise<string[]> {
+  return (await request.get<string[]>("/posts/tags")).data;
+}
 export async function getPost(id: number): Promise<Post> {
   return (await request.get<Post>(`/posts/${id}`)).data;
 }
