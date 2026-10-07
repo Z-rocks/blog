@@ -10,13 +10,33 @@ concurrency:
   group: production
   cancel-in-progress: false
 
+# 发布只读代码,不需要写权限的令牌。
+permissions:
+  contents: read
+
 env:
   SSH_HOST: ${{ secrets.SSH_HOST }}
   SSH_USER: ${{ secrets.SSH_USER }}
 
 jobs:
-  deploy:
+  # 发布前的门禁。类型检查和构建只能证明"能编译",证明不了"行为还对":
+  # 草稿泄露到前台、列表带上正文这类回归必须由接口测试挡住。
+  test:
     runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_ROOT_HOST: "%"
+          MYSQL_DATABASE: blog_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
     steps:
       - uses: actions/checkout@v4
 
@@ -28,19 +48,33 @@ jobs:
             backend/package-lock.json
             frontend/package-lock.json
 
-      - name: 后端安装、类型检查与构建
+      - name: 后端类型检查、构建与接口测试
+        env:
+          # 测试只连 blog_test,绝不动开发库。
+          TEST_DB_HOST: 127.0.0.1
+          TEST_DB_PORT: "3306"
+          TEST_DB_USER: root
+          TEST_DB_PASSWORD: ""
+          TEST_DB_NAME: blog_test
         run: |
           cd backend
           npm ci
           npm run typecheck
           npm run build
+          npm test
 
-      - name: 前端安装、类型检查与构建
+      - name: 前端类型检查与构建
         run: |
           cd frontend
           npm ci
           npm run typecheck
           npm run build
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
       - name: 准备 SSH
         run: |
@@ -49,6 +83,7 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
+      # 只上传源码:node_modules 与 dist 由服务器在版本目录里重新构建。
       - name: 打包并上传
         run: |
           RELEASE_ID="$(date +%Y%m%d-%H%M%S)-g${GITHUB_SHA::7}"
