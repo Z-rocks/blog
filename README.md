@@ -113,6 +113,13 @@ npm run dev
 
 ## 页面与源码导航
 
+站点有两个域名，**共用同一份 `frontend/dist` 与同一个后端**——隔离做在 Nginx 与接口层，前端不需要知道自己被哪个域名服务，本地开发（`localhost:5173`）因此不需要任何特殊分支：
+
+| 域名                       | 可用路由                                                     |
+| -------------------------- | ------------------------------------------------------------ |
+| `zrocks.me`、`www.zrocks.me` | 仅前台；`/login` 与 `/admin/*` 由 Nginx 直接返回 404          |
+| `adm.zrocks.me`            | 全部路由；整站另有一层 HTTP Basic Auth                       |
+
 | 路由               | 页面            | 说明                                            |
 | ------------------ | --------------- | ----------------------------------------------- |
 | `/`                | `Home.vue`      | 一句话定位、三个项目卡片、最新三篇已发布文章    |
@@ -121,7 +128,7 @@ npm run dev
 | `/login`           | `Login.vue`     | 管理员登录；token 保存到 localStorage           |
 | `/admin/edit/:id?` | `AdminEdit.vue` | 同页文章管理与新建 / 编辑，前端路由守卫         |
 
-一共五条路由。未知路径由根组件显示未找到提示。
+一共五条路由，后两条只在 `adm.zrocks.me` 上可达。未知路径由根组件显示未找到提示。
 
 - `frontend/src/data/projects.ts`：个人定位、联系方式与项目卡片数据（名称、描述、亮点、仓库链接）都在这里维护；空链接不会渲染成不可用按钮。
 - `frontend/src/types/index.ts`：前端实体、列表类型、输入参数和通用分页类型。
@@ -157,6 +164,8 @@ npm run dev
 | POST   | `/api/admin/posts`                         | JWT  | 创建文章                                          |
 | PUT    | `/api/admin/posts/:id`                     | JWT  | 完整更新文章                                      |
 | DELETE | `/api/admin/posts/:id`                     | JWT  | 删除成功返回 `{ id }`                             |
+
+> `/api/admin/*` 与 `/api/auth/login` **只在 `adm.zrocks.me` 上存在**：公开站的 Nginx 对这几条路径直接返回 404。后台接口因此有两层——Nginx 的域名隔离，以及应用层的 JWT 校验。前端路由守卫只改善体验，这两层都不依赖它。
 
 新建 / 更新请求：
 
@@ -212,6 +221,9 @@ mysql -u root -e "CREATE DATABASE IF NOT EXISTS blog_test CHARACTER SET utf8mb4 
 ## 安全设计
 
 - token 存放在 localStorage，因此 XSS 是主要威胁面：只把 DOMPurify 清洗后的 HTML 交给 `v-html`，生产环境配合 CSP（`script-src 'self'`，无任何远程脚本 / 样式 / 字体白名单）与 HTTPS。
+- **后台与公网分域名**：`adm.zrocks.me` 独占 `/login`、`/admin/*` 与 `/api/admin/*`，公开站对这几条路径返回 404。附带的好处是 localStorage 按 origin 隔离——在公开站上即使出现 XSS，也读不到后台域名下的 token。
+- **后台另有一层 HTTP Basic Auth**（`auth_basic` 覆盖整站，续期校验路径 `auth_basic off` 豁免）。它挡的是"拿到域名就能试密码"这一层，与 JWT 是互补而非替代：API 仍然逐个校验 JWT。
+- 80 端口的默认 server 对未知 Host（含直接用 IP 访问）返回 444 断开，HTTP 不再提供任何明文页面；`zrocks.me` / `adm.zrocks.me` 一律 301 到 HTTPS。
 - 退出登录仅删除浏览器 token；无刷新 token、服务端会话或撤销名单。令牌泄漏时轮换 `JWT_SECRET`；修改管理员密码不会吊销已签发 token。
 - 后端跨域只允许配置的来源；同源部署下前端只走相对路径 `/api`。
 - 登录暴力尝试由 Nginx 按 IP 限流（5 次/分钟）；本地 Nest 服务没有额外限流模块，**生产环境不得直接暴露 3000 端口**（安全组仅放行 80/443）。

@@ -123,40 +123,121 @@ WantedBy=multi-user.target
 
 ## 5. 配置 Nginx 与 HTTPS
 
-1. 安装 Nginx 与证书签发工具，创建 `/var/www/certbot`。
-2. 将本目录 `nginx.conf` 复制到 `/etc/nginx/conf.d/devlog.conf`。它须由主配置的 `http {}` 引入。
-3. 把所有 `example.com`、证书路径和静态目录替换为真实值。
-4. **证书还不存在时，不要启用 443 server 块**，先仅保留 HTTP server，运行 `nginx -t` 后加载。
-5. 使用 ACME webroot 签发证书，例如：
+站点有两个域名，共用同一份前端产物与同一个后端：
+
+| 域名                       | 作用                  | 额外防护                                                                |
+| -------------------------- | --------------------- | ----------------------------------------------------------------------- |
+| `zrocks.me`、`www.zrocks.me` | 公开站（作品集 + 博客） | 无；`/login`、`/admin/*`、`/api/admin/*`、`/api/auth/login` 一律 404      |
+| `adm.zrocks.me`            | 后台（登录 + 工作台）  | HTTP Basic Auth + JWT 登录                                              |
+
+隔离做在 Nginx 与接口层，前端不需要知道自己被哪个域名服务，所以本地开发（`localhost:5173`）不需要任何特殊分支，两个域名也共用同一份 `frontend/dist`。
+
+### 5.1 首次搭建
+
+1. 安装 Nginx、Certbot 与 `htpasswd`，并创建校验目录：
 
 ```bash
-sudo certbot certonly --webroot -w /var/www/certbot -d example.com
+sudo apt-get update
+sudo apt-get install -y nginx certbot python3-certbot-nginx apache2-utils
+sudo mkdir -p /var/www/certbot
 ```
 
-6. 证书签发成功后启用 443 server，验证路径正确，再运行：
+2. 准备后台站的 Basic Auth 凭据（用户名与 JWT 管理员账号相互独立）：
 
 ```bash
+sudo htpasswd -c /etc/nginx/.htpasswd-devlog devlog
+sudo chmod 640 /etc/nginx/.htpasswd-devlog
+```
+
+3. 把 `nginx.conf` 复制到 `/etc/nginx/conf.d/devlog.conf`，它由主配置的 `http {}` 引入。
+4. **首次搭建时证书还不存在**，两个 443 server 块会让 `nginx -t` 失败。先注释掉它们，只保留 80 端口，`sudo nginx -t && sudo systemctl reload nginx`。
+5. 签发覆盖全部三个域名的证书：
+
+```bash
+sudo certbot certonly --webroot -w /var/www/certbot \
+  --cert-name zrocks.me -d zrocks.me -d www.zrocks.me -d adm.zrocks.me
+```
+
+6. 取消注释 443 server 块，`sudo nginx -t && sudo systemctl reload nginx`，再 `sudo certbot renew --dry-run`。
+
+### 5.2 在已有站点上追加 adm 子域名
+
+已有部署（证书只含 `zrocks.me` 与 `www.zrocks.me`，且 Certbot 的 `renewalparams.authenticator = nginx`）按下面顺序操作：
+
+1. 确认 DNS：`adm.zrocks.me` 的 A 记录已指向服务器。
+2. 安装 `apache2-utils` 并创建 `/etc/nginx/.htpasswd-devlog`（见 5.1 第 2 步）。
+3. 备份并替换配置：
+
+```bash
+sudo cp /etc/nginx/conf.d/devlog.conf "/etc/nginx/conf.d/devlog.conf.bak-$(date +%F)"
+sudo cp deploy/nginx.conf /etc/nginx/conf.d/devlog.conf
 sudo nginx -t
-sudo systemctl reload nginx
-sudo certbot renew --dry-run
 ```
 
-生产前端通过同源 `/api` 访问后端，Nginx 的 `proxy_pass` **不带尾部斜杠**，避免丢失 `/api` 前缀。刷新 `/blog/1` 应返回 Vue 的 index.html。不存在的静态资源返回 404，而不是 SPA HTML。
+此时 `https://adm.zrocks.me/` 会报证书不匹配——这是预期的，证书还没扩展，下一步就会修好。
+
+4. **把续期方式从 nginx 插件切到 webroot，并扩展证书**：
+
+```bash
+sudo certbot certonly --webroot -w /var/www/certbot \
+  --cert-name zrocks.me -d zrocks.me -d www.zrocks.me -d adm.zrocks.me
+sudo systemctl reload nginx
+```
+
+这一步不能省，也不该改用 `--nginx`：插件会往 server 块里插一个 `location = /.well-known/acme-challenge/<token>`，而那个 location **不带** `auth_basic off`，会被后台站的 Basic Auth 拦成 401，证书到期后静默续不上。走 webroot 则由本配置里显式写的 `location ^~ /.well-known/acme-challenge/`（带 `auth_basic off`）接管。
+
+5. 验证续期，并记住回滚方式：
+
+```bash
+sudo certbot renew --dry-run
+# 回滚：
+# sudo cp /etc/nginx/conf.d/devlog.conf.bak-<日期> /etc/nginx/conf.d/devlog.conf
+# sudo nginx -t && sudo systemctl reload nginx
+```
+
+**这个文件不会被 CI 自动部署**：`deploy-remote.sh` 只切换代码版本，不碰 `/etc/nginx`。每次改动 Nginx 都要手动重复第 3～5 步。
+
+另外，CI 的「公网验收」现在走 `PUBLIC_URL`（默认 `https://zrocks.me/`）。因为 80 端口改成跳转 / 断开了，如果这个变量还指向 `http://<IP>/`，验收会失败并挡住发布。需要换域名时在仓库 Variables 里改 `PUBLIC_URL`。
+
+### 5.3 行为说明
+
+生产前端通过同源 `/api` 访问后端，`proxy_pass` **不带尾部斜杠**，避免丢失 `/api` 前缀。刷新 `/blog/1` 应返回 Vue 的 index.html，不存在的静态资源返回 404 而不是 SPA HTML。
+
+主域名拦截后台路径用 404 而不是 403：403 等于确认「这个路径确实有东西」，404 什么都不透露。
+
+Basic Auth 覆盖 `adm.zrocks.me` 整站（含 `/api/`），凭据由浏览器缓存、SPA 的 XHR 会自动带上。代价有两个：浏览器重启后第一次访问会弹一次原生登录框；前端把任意 401 都当成「登录过期」处理，所以 Basic 凭据失效时表现为「跳回登录页 + 弹一次 Basic 框」。
+
+80 端口的默认 server 对未知 Host（含直接用 IP 访问）返回 444 直接断开，不再提供任何明文页面。此前它会把整站连同 `/api/auth/login` 一起暴露在明文 HTTP 上，管理员密码存在被中间人截获的风险。
 
 CSP 不允许任何远程脚本、样式或字体（站点使用系统字体回退）；若日后引入远程字体，再按需放开对应域名。确认 HTTPS 稳定后可启用注释中的 HSTS。生产禁止 iframe 嵌入；Vite 开发预览不受这个生产配置影响。
 
-登录入口按 IP 限流，最多每分钟 5 次，允许 5 次突发，超出返回统一 JSON 429。若使用 CDN / 前置代理，应先正确配置只信任代理网段的 `real_ip`，否则会误把所有请求识别为一个代理 IP。Nginx 自身的 413 / 502 等基础设施错误不保证 Nest JSON 格式，前端会显示通用错误提示。
+登录限流只留在后台站，最多每分钟 5 次、允许 5 次突发，超出返回统一 JSON 429。若使用 CDN / 前置代理，应先正确配置只信任代理网段的 `real_ip`，否则会误把所有请求识别为一个代理 IP。Nginx 自身的 413 / 502 等基础设施错误不保证 Nest JSON 格式，前端会显示通用错误提示。
 
 ## 6. 上线验收
 
-- [ ] `/`、`/blog`、文章详情与登录页正常，移动端无横向溢出。
+公开站（`https://zrocks.me`）：
+
+- [ ] `/`、`/blog`、文章详情正常，移动端无横向溢出；首页没有任何「管理登录」入口。
 - [ ] 直接刷新前端深链接不返回 Nginx 404。
+- [ ] `/login`、`/admin/edit`、`/api/admin/posts`、`/api/auth/login` 全部返回 **404**（不是 403，也不是 SPA 的 HTML）。
 - [ ] `/api/posts` 返回统一分页响应，列表无 content。
 - [ ] `/api/posts/tags` 只返回已发布文章的标签，草稿标签不出现。
-- [ ] 无 token 请求 `/api/admin/posts` 为 401。
-- [ ] 新建草稿不公开，发布可见，修改 / 转草稿 / 删除按预期生效。
 - [ ] 非法 DTO 为 400，未知文章为 404，后端错误不泄露 SQL / 堆栈。
-- [ ] 登录限流、HTTPS 证书和自动续期验证通过。
+
+后台站（`https://adm.zrocks.me`）：
+
+- [ ] 不带 Basic 凭据时浏览器弹出登录框；取消后得到 401，看不到任何页面内容。
+- [ ] Basic 通过后能打开登录页，`/admin/edit` 工作台与增删改正常。
+- [ ] 无 token 请求 `/api/admin/posts` 仍为 401（JWT 这一层没有被 Basic Auth 取代）。
+- [ ] 新建草稿不公开，发布可见，修改 / 转草稿 / 删除按预期生效。
+- [ ] 登录限流生效：超过每分钟 5 次返回统一 JSON 429。
+
+协议与基础设施：
+
+- [ ] `http://zrocks.me/`、`http://adm.zrocks.me/` 都 301 到 HTTPS。
+- [ ] 直接用 IP 访问（`http://<IP>/`）连接被断开，不返回任何页面。
+- [ ] 两个域名的证书都有效，且 `adm.zrocks.me` 在内。
+- [ ] `certbot renew --dry-run` 通过——重点确认 adm 的校验没有被 Basic Auth 挡住。
 - [ ] 外网无法连接 3000 / 3306，MySQL 和系统账号均最小权限。
 - [ ] `.env` 不在前端静态目录、Git 或公开备份里。
 
