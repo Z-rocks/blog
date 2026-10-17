@@ -51,7 +51,7 @@ jobs:
             backend/package-lock.json
             frontend/package-lock.json
 
-      - name: 后端类型检查、构建与接口测试
+      - name: 类型检查、构建与接口测试
         env:
           # 测试只连 blog_test,绝不动开发库。
           TEST_DB_HOST: 127.0.0.1
@@ -59,19 +59,8 @@ jobs:
           TEST_DB_USER: root
           TEST_DB_PASSWORD: ""
           TEST_DB_NAME: blog_test
-        run: |
-          cd backend
-          npm ci
-          npm run typecheck
-          npm run build
-          npm test
-
-      - name: 前端类型检查与构建
-        run: |
-          cd frontend
-          npm ci
-          npm run typecheck
-          npm run build
+        # 与 CI 流程共用同一份命令,避免两条流水线各跑各的。
+        run: bash scripts/verify.sh
 
   deploy:
     needs: test

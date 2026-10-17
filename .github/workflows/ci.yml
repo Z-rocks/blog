@@ -1,0 +1,67 @@
+name: CI
+
+# 合并前的门禁。main 分支上的同一套检查由 Deploy 流程执行(通过后才发布),
+# 这里覆盖 PR 与普通分支推送,让问题在合并之前暴露,而不是等上线时才发现。
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+  workflow_dispatch:
+
+# 同一个 PR 连续推送时取消上一次,避免排队跑过期代码。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: 类型检查、构建与接口测试
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_ROOT_HOST: "%"
+          MYSQL_DATABASE: blog_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      # 检查项与发布前完全一致,命令定义在 scripts/verify.sh 里。
+      - name: 运行校验脚本
+        env:
+          TEST_DB_HOST: 127.0.0.1
+          TEST_DB_PORT: "3306"
+          TEST_DB_USER: root
+          TEST_DB_PASSWORD: ""
+          TEST_DB_NAME: blog_test
+        run: bash scripts/verify.sh
+
+      - name: 汇总
+        if: always()
+        run: |
+          {
+            echo "## CI 结果"
+            echo ""
+            echo "- 提交：\`${GITHUB_SHA}\`"
+            echo "- 分支：\`${GITHUB_REF_NAME}\`"
+            echo "- 状态：${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"

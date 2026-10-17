@@ -122,7 +122,7 @@ npm run dev
 
 | 路由               | 页面            | 说明                                            |
 | ------------------ | --------------- | ----------------------------------------------- |
-| `/`                | `Home.vue`      | 一句话定位、三个项目卡片、最新三篇已发布文章    |
+| `/`                | `Home.vue`      | 一句话定位、项目卡片、最新三篇已发布文章        |
 | `/blog`            | `BlogList.vue`  | 分页与完整标签筛选；状态保存在 URL 查询参数中   |
 | `/blog/:id`        | `Post.vue`      | 已发布文章、安全 Markdown 渲染、加载 / 失败状态 |
 | `/login`           | `Login.vue`     | 管理员登录；token 保存到 localStorage           |
@@ -130,7 +130,7 @@ npm run dev
 
 一共五条路由，后两条只在 `adm.zrocks.me` 上可达。未知路径由根组件显示未找到提示。
 
-- `frontend/src/data/projects.ts`：个人定位、联系方式与项目卡片数据（名称、描述、亮点、仓库链接）都在这里维护；空链接不会渲染成不可用按钮。
+- `frontend/src/data/projects.ts`：个人定位、联系方式与项目卡片数据（名称、描述、亮点、仓库 / 镜像 / 发布页链接）都在这里维护；卡片序号与总数由数组长度推导，新增作品只需追加一项；空链接不会渲染成不可用按钮。`visual` 决定卡片视觉（`browser` / `terminal` / `flow` / `mobile`），四种视觉统一由 `--vs` 与 `--visual-h` 两个变量控制缩放，断点只改变量、不覆写 `transform`。
 - `frontend/src/types/index.ts`：前端实体、列表类型、输入参数和通用分页类型。
 - `frontend/src/api/request.ts`：token 请求拦截器、响应剥壳、401 清理。保留真实 `AxiosResponse<T>` 类型，接口函数只返回业务 `data`。
 - `frontend/src/utils/markdown.ts`：安全渲染。高亮内置 TS、JS、JSON、SQL、Bash、HTML/XML、CSS、Java；未知语言转义为普通代码。
@@ -193,6 +193,8 @@ npm run build --prefix frontend
 
 产物分别是 `backend/dist/` 与 `frontend/dist/`，不入 Git。
 
+上面五条命令合起来就是 CI 跑的全部内容，`bash scripts/verify.sh` 可一次跑完（需本机 MySQL 就绪），也是发布前的门禁。
+
 后端接口测试用 Jest + supertest 跑在**真实 MySQL** 上而不是 mock —— 草稿是否泄露、列表是否夹带正文，这类判断发生在 SQL 里，mock 掉仓储就正好绕过了要守的那一段。覆盖范围：草稿 / 发布隔离、列表不返回 `content`、标签完整匹配、标签聚合不受分页影响、无 token 与伪造 token 的 401、DTO 校验（缺字段 / 多余字段 / 非法枚举 / 超限分页）、以及新建 → 发布 → 删除的完整流转。
 
 测试库需要先存在（`DB_SYNC` 只建表不建库）：
@@ -229,9 +231,21 @@ mysql -u root -e "CREATE DATABASE IF NOT EXISTS blog_test CHARACTER SET utf8mb4 
 - 登录暴力尝试由 Nginx 按 IP 限流（5 次/分钟）；本地 Nest 服务没有额外限流模块，**生产环境不得直接暴露 3000 端口**（安全组仅放行 80/443）。
 - 当前没有多端版本冲突检测，两个标签页同时编辑同一篇文章时后一次保存覆盖前一次。
 
+## 持续集成
+
+三条流水线各管一段，互不阻塞：
+
+| 工作流                                                          | 触发                                    | 做什么                                                                                                                                                            |
+| --------------------------------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [ci.yml](.github/workflows/ci.yml)                               | PR、非 `main` 分支推送、手动            | 合并前门禁：两端类型检查与构建 + 后端接口测试（MySQL 8 service container）。同一 PR 连续推送会取消上一次运行                                                        |
+| [deploy.yml](.github/workflows/deploy.yml)                       | 推送 `main`、手动                       | 先跑与 CI 完全相同的校验，通过后才进入发布；任一步失败都不影响线上版本                                                                                             |
+| [security.yml](.github/workflows/security.yml)                   | 推送 `main`、PR、每周一 09:00、手动     | 生产依赖审计（`npm audit --omit=dev`，结果写进 job summary，不阻断）+ CodeQL 静态扫描（TS / JS，结果进仓库 Code scanning 面板）                                     |
+
+校验命令只有一份，放在 [`scripts/verify.sh`](scripts/verify.sh)：CI 与发布都调它。两条流水线各抄一份命令，迟早会出现"PR 绿了、发布红了"。
+
 ## 部署与运维
 
-线上通过 **GitHub Actions 持续部署**：推送 `main` 先跑 `test` job（两端类型检查与构建 + 后端接口测试，跑在 MySQL 8 service container 上），通过后才进入 `deploy` job（上传 → 服务器构建 → 原子切换 → 健康检查 → 公网验收）。任意一步失败都不会影响线上版本（定义见 [.github/workflows/deploy.yml](.github/workflows/deploy.yml)）。同一时间只允许一个发布流程（concurrency 排队），部署历史可在仓库的 Actions 页面查看。
+线上通过 **GitHub Actions 持续部署**：推送 `main` 先跑 `test` job（调用 `scripts/verify.sh`：两端类型检查与构建 + 后端接口测试，跑在 MySQL 8 service container 上），通过后才进入 `deploy` job（上传 → 服务器构建 → 原子切换 → 健康检查 → 公网验收）。任意一步失败都不会影响线上版本（定义见 [.github/workflows/deploy.yml](.github/workflows/deploy.yml)）。同一时间只允许一个发布流程（concurrency 排队），部署历史可在仓库的 Actions 页面查看。
 
 服务器侧沿用"版本目录 + 软链接"布局：`/var/www/devlog-releases/<版本ID>/` 存每个版本，`/var/www/devlog` 为指向当前版本的软链接，Nginx 与 systemd 只认该路径；发布与回滚由服务器脚本 `/usr/local/lib/devlog-remote.sh` 完成（每次部署随仓库更新），健康检查失败自动切回上一版本。
 

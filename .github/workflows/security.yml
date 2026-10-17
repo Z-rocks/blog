@@ -1,0 +1,73 @@
+name: Security
+
+# 两道独立的检查,都不参与发布,失败也不会影响线上:
+#   1. 依赖审计 —— 生产依赖出现 high 及以上漏洞时在 PR / 定时任务里提示;
+#   2. CodeQL   —— 对 TS / JS 做静态扫描,结果进仓库的 Code scanning 面板。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # 每周一 01:00 UTC(北京时间 09:00),盯住新披露的传递依赖漏洞。
+    - cron: "0 1 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: 生产依赖审计
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 只审生产依赖:devDependencies 不进产物,漏洞不落到线上。
+      # 审计结果写进 job summary,不阻断流水线——修复节奏由人决定。
+      - name: npm audit
+        continue-on-error: true
+        run: |
+          for app in backend frontend; do
+            {
+              echo "## $app"
+              echo ""
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            ( cd "$app" && npm audit --omit=dev --audit-level=high ) \
+              >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+  codeql:
+    name: CodeQL 扫描
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 初始化 CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - name: 构建索引
+        uses: github/codeql-action/autobuild@v3
+
+      - name: 分析并上传结果
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
