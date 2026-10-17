@@ -61,4 +61,24 @@ export const projects: Project[] = [
     visual: "flow",
     placeholder: false,
   },
+  {
+    id: "campus-assistant",
+    name: "校园助手",
+    category: "MOBILE · FLUTTER",
+    description:
+      "插件驱动的 Android 课表应用：把「怎么从教务系统取数据」抽成 .js 插件，内核不认识任何一所学校。课表与登录 Cookie 全部留在本机，没有后端、没有账号体系，换所学校只需换一个插件。",
+    highlights: [
+      "插件化取数：教务 URL、字段映射与真实作息写进 JS 插件，换学校只换插件、不改客户端",
+      "Kotlin AppWidget 桌面小组件：Dart 侧算好文案与颜色，Kotlin 只做 RemoteViews 哑渲染，平板按 dimens 三档缩放",
+      "手动修改走独立覆盖层，重新同步不会冲掉；Release 双源（Gitee 主 / GitHub 备）完成更新检查与 APK 分发",
+    ],
+    tags: ["Flutter", "Dart", "Kotlin", "Hive", "AppWidget"],
+    links: {
+      source: "https://gitee.com/zrocks/my_schedule_app",
+      mirror: "https://github.com/Z-rocks/my_schedule_app",
+      release: "https://gitee.com/zrocks/my_schedule_app/releases",
+    },
+    visual: "mobile",
+    placeholder: false,
+  },
 ];

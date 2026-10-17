@@ -8,6 +8,13 @@ const posts = ref<PostSummary[]>([]);
 const loading = ref<boolean>(true);
 const error = ref<string>("");
 const expanded = ref<string | null>(null);
+// 卡片序号与总数都由 projects 推导，新增作品时不必再改模板。
+const projectCount = String(projects.length).padStart(2, "0");
+// 手机卡片里的课表格子：7 列（周一至周日）× 4 行，1 表示有课。
+const phoneCells = [
+  0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0,
+  0, 1, 0,
+];
 async function loadPosts(): Promise<void> {
   loading.value = true;
   error.value = "";
@@ -167,7 +174,7 @@ onMounted(loadPosts);
           <p>一些认真构建的作品，以及它们背后的思考。</p>
         </div>
         <span class="section-aside"
-          >PROJECTS <span class="count-pill">03</span></span
+          >PROJECTS <span class="count-pill">{{ projectCount }}</span></span
         >
       </div>
       <div class="project-grid">
@@ -205,6 +212,22 @@ onMounted(loadPosts);
               ><span class="flow-line"></span
               ><span class="flow-box">✓<small>COMMIT</small></span
               ><span class="flow-caption">THINK. DESIGN. BUILD.</span>
+            </div>
+            <div v-else-if="project.visual === 'mobile'" class="mini-phone">
+              <div class="phone-status">
+                <span>第 6 周</span><i class="phone-battery"></i>
+              </div>
+              <div class="phone-grid">
+                <span
+                  v-for="(cell, cellIndex) in phoneCells"
+                  :key="cellIndex"
+                  class="phone-cell"
+                  :class="{ 'is-on': cell === 1 }"
+                ></span>
+              </div>
+              <div class="phone-dock">
+                <i></i><i class="is-active"></i><i></i>
+              </div>
             </div>
             <div v-else class="mini-terminal">
               <div class="terminal-top">
@@ -256,13 +279,30 @@ onMounted(loadPosts);
                 rel="noopener noreferrer"
                 >查看源码 ↗</a
               ><a
+                v-if="project.links.mirror"
+                :href="project.links.mirror"
+                target="_blank"
+                rel="noopener noreferrer"
+                >镜像仓库 ↗</a
+              ><a
+                v-if="project.links.release"
+                :href="project.links.release"
+                target="_blank"
+                rel="noopener noreferrer"
+                >下载安装包 ↗</a
+              ><a
                 v-if="project.links.demo"
                 :href="project.links.demo"
                 target="_blank"
                 rel="noopener noreferrer"
                 >在线体验 ↗</a
               ><span
-                v-if="!project.links.source && !project.links.demo"
+                v-if="
+                  !project.links.source &&
+                  !project.links.mirror &&
+                  !project.links.release &&
+                  !project.links.demo
+                "
                 class="muted"
                 >项目链接待补充</span
               >
@@ -270,9 +310,6 @@ onMounted(loadPosts);
           </div>
         </article>
       </div>
-      <p class="placeholder-note">
-        ↳ 当前为作品集骨架，姓名、求职定位及占位项目请在上线前替换为真实信息。
-      </p>
     </section>
     <section class="section-block articles-section">
       <div class="section-heading">

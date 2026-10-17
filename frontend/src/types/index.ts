@@ -48,8 +48,14 @@ export interface Project {
   description: string;
   highlights: [string, string, string];
   tags: string[];
-  links: { source?: string; demo?: string };
-  visual: "browser" | "flow" | "terminal";
+  /** 主仓库、镜像仓库、发布页与在线体验地址，均为可选项。 */
+  links: {
+    source?: string;
+    mirror?: string;
+    release?: string;
+    demo?: string;
+  };
+  visual: "browser" | "flow" | "terminal" | "mobile";
   placeholder: boolean;
 }
 export interface Profile {
