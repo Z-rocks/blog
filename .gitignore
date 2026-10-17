@@ -9,3 +9,5 @@ coverage/
 .idea/
 .vscode/
 .deploy-meta
+# 本地 agent 工作区(记忆、临时截图),不进仓库
+.workbuddy-ai/
