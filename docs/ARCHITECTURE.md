@@ -168,15 +168,25 @@ builder
 ```
 src/
 ├── main.ts            挂路由 + 全局样式 + highlight.js 主题
-├── App.vue            站点外壳：导航、移动端菜单、登录态感知
-├── router/index.ts    5 条路由 + 全局守卫 + document.title
+├── App.vue            站点外壳：导航、移动端菜单、登录态、Lenis 单例
+├── router/index.ts    6 条路由 + 全局守卫 + document.title + 锚点滚动
 ├── api/
 │   ├── request.ts     axios 实例、token 存取、两个拦截器
 │   └── post.ts        8 个接口函数（只返回业务 data）
-├── views/             Home / BlogList / Post / Login / AdminEdit
-├── data/projects.ts   作品集数据（静态，改这里就能换内容）
+├── views/             Home / WorkDetail / BlogList / Post / Login / AdminEdit
+├── components/
+│   ├── ProjectVisual.vue   卡片与详情页共用的 CSS 视觉（browser / flow / terminal / mobile）
+│   └── work-visuals/       核心动效注册表：PluginArch（插件三步）、StepFlow（通用分步）
+├── composables/
+│   ├── useSmoothScroll.ts  Lenis 单例、锚点滚动、降级判断
+│   └── useStepProgress.ts  滚动进度 → 离散步骤（0 / 1 / 2）
+├── data/
+│   ├── projects.ts    作品集摘要（首页卡片，摘要级字段）
+│   └── works/         项目详情（`Record<id, WorkDetail>` 显式注册表）
 ├── types/index.ts     全部类型定义
-├── utils/markdown.ts  安全渲染
+├── utils/
+│   ├── markdown.ts    安全渲染
+│   └── deck.ts        卡片堆叠参数（纯函数，有单测）
 └── styles/main.css    手写样式（含响应式与深色代码块主题）
 ```
 
@@ -188,6 +198,7 @@ src/
 | 路由 | 组件 | 守卫 |
 |---|---|---|
 | `/` | Home.vue | — |
+| `/work/:id` | WorkDetail.vue | — |
 | `/blog` | BlogList.vue | — |
 | `/blog/:id` | Post.vue | — |
 | `/login` | Login.vue | — |
@@ -196,7 +207,20 @@ src/
 守卫规则：`requiresAuth === true` **或** 路径以 `/admin/` 开头，且本地没有 token → 跳 `/login?redirect=<原路径>`。
 双条件是因为 `meta` 容易漏写，路径前缀是兜底。
 
-`scrollBehavior`：有 hash 时滚到锚点（`top: 100` 给固定导航栏留位置），浏览器前进后退时恢复原位置。
+`scrollBehavior`：有 hash 时等一帧再滚（元素可能刚挂载），偏移 100px 给吸顶头部留位置；
+没有 hash 时回顶部；浏览器前进后退时用 `savedPosition` 恢复原位置。
+直接打开 `/#projects` 这类深链时，浏览器的原生锚点滚动早于路由组件挂载，
+`App.vue` 里补一次带重试的 `scrollToInitialHash`。
+
+### 4.3 动效分层
+
+- **Lenis**（`composables/useSmoothScroll.ts`）：挂在 `App.vue`，全站一份；触屏与
+  `prefers-reduced-motion` 下完全不初始化，回到原生滚动。
+- **GSAP + ScrollTrigger**：只在 `Home.vue` 与详情页的核心动效里，全部用
+  `gsap.matchMedia()` 包裹——`(min-width: 801px)` 且 `(prefers-reduced-motion: no-preference)`
+  才建时间线，其余情况内容直接可见。
+- 只动 `transform` / `opacity`；`h1` 是 LCP 元素，不做入场动画。
+- 卡片堆叠的缩放与透明度由 `utils/deck.ts` 的纯函数给出，GSAP 与单测共用同一份参数。
 
 > 前端守卫只改善体验，**不构成安全边界**。真正的鉴权在后端每个写接口的 `JwtAuthGuard` 上。
 

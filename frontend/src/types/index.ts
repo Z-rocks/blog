@@ -66,3 +66,42 @@ export interface Profile {
   github?: string;
   resume?: string;
 }
+
+/** 详情页"核心架构"里的一个步骤，三步刚好对应三段滚动。 */
+export interface WorkStep {
+  key: string;
+  /** 步骤名，如「通用内核」。 */
+  title: string;
+  /** 该步骤的解释文案。 */
+  caption: string;
+}
+
+/**
+ * 项目详情页数据。首页的 Project 只保留摘要，
+ * 深度内容放在这里，新增案例不必再动首页模板。
+ */
+export interface WorkDetail {
+  id: string;
+  name: string;
+  category: string;
+  /** 一句话定位。 */
+  tagline: string;
+  stack: string[];
+  links: Project["links"];
+  /** Hero 区复用首页的视觉体系。 */
+  visual: Project["visual"];
+  problem: { heading: string; body: string[] };
+  core: {
+    heading: string;
+    /** 注册表的 key：决定用哪一个核心动效组件。 */
+    visual: "plugin-arch" | "step-flow";
+    steps: [WorkStep, WorkStep, WorkStep];
+  };
+  tech: {
+    heading: string;
+    points: { title: string; body: string }[];
+    /** 可选代码片段，纯 <pre> 渲染，不引入 highlight.js。 */
+    snippet?: { lang: string; code: string };
+  };
+  result: { heading: string; body: string[] };
+}

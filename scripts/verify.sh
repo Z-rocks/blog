@@ -17,10 +17,11 @@ npm run typecheck
 npm run build
 npm test
 
-echo "==> 前端:类型检查 → 构建"
+echo "==> 前端:类型检查 → 单测 → 构建"
 cd "$ROOT/frontend"
 npm ci --no-audit --no-fund
 npm run typecheck
+npm test
 npm run build
 
 echo "==> 全部通过"

@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { getToken } from "./api/request";
+import {
+  destroySmoothScroll,
+  initSmoothScroll,
+  scrollToSelector,
+} from "./composables/useSmoothScroll";
 import { profile } from "./data/projects";
 
 const route = useRoute();
@@ -15,6 +20,22 @@ watch(
     loggedIn.value = !!getToken();
   },
 );
+// Lenis 全站一份，生命周期跟着应用走；页面只负责注销自己的 ScrollTrigger。
+onMounted((): void => {
+  initSmoothScroll();
+  scrollToInitialHash();
+});
+onBeforeUnmount(destroySmoothScroll);
+
+/**
+ * 直接打开 /#projects 这类深链时，浏览器的原生锚点滚动早于路由组件挂载，
+ * 目标还不存在，页面会停在顶部。这里等目标出现后补一次。
+ */
+function scrollToInitialHash(attempt = 0): void {
+  if (!window.location.hash) return;
+  if (scrollToSelector(window.location.hash, { offset: -100 })) return;
+  if (attempt < 6) window.setTimeout((): void => scrollToInitialHash(attempt + 1), 120);
+}
 </script>
 
 <template>

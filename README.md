@@ -61,10 +61,13 @@
 | 页面 | 内容 |
 |---|---|
 | `/` 首页 | 一句话定位、项目卡片（描述 + 三条亮点 + 技术标签 + 仓库 / 镜像 / 发布页链接）、最新三篇已发布文章 |
+| `/work/:id` 项目详情 | 问题背景 → 核心架构（滚动分步动效）→ 技术要点 → 成果与入口；未知 id 显示 404 态 |
 | `/blog` 文章列表 | 分页 + 标签筛选，**筛选状态保存在 URL 查询参数里**，刷新和分享都不丢 |
 | `/blog/:id` 文章详情 | Markdown 渲染、代码高亮、加载 / 失败 / 404 状态 |
 
 项目卡片的数据全在 `frontend/src/data/projects.ts`：姓名、定位、联系方式、每个项目的名称 / 描述 / 亮点 / 标签 / 外链都在这里维护。卡片序号与总数由数组长度推导，新增作品只需追加一项；空链接不会渲染成不可用按钮。`visual` 字段决定卡片视觉（`browser` / `terminal` / `flow` / `mobile`），四种视觉统一由 `--vs` 与 `--visual-h` 两个变量控制缩放，断点只改变量、不覆写 `transform`。
+
+项目详情的数据在 `frontend/src/data/works/`，用显式注册表 `Record<id, WorkDetail>` 组织：新增一个案例就加一个文件与一行登记，漏写会被 `vue-tsc` 拦下。首页卡片只放摘要，深度内容全在详情页。
 
 ### 后台（单人）
 
@@ -80,7 +83,8 @@
 
 - **CI**：三条流水线——PR 门禁（类型检查 + 两端构建 + 后端接口测试）、发布流程、安全扫描（依赖审计 + CodeQL），校验命令只有 [`scripts/verify.sh`](scripts/verify.sh) 一份
 - **版本化发布**：`/var/www/devlog-releases/<版本ID>/` + 软链接，一条命令回滚到任意历史版本
-- **测试**：后端参数化接口测试（Jest + supertest）跑在**真实 MySQL** 上，覆盖草稿泄漏、正文外泄、标签匹配、鉴权与 DTO 校验
+- **测试**：后端参数化接口测试（Jest + supertest）跑在**真实 MySQL** 上，覆盖草稿泄漏、正文外泄、标签匹配、鉴权与 DTO 校验；前端对动效参数做纯函数单测（Vitest）
+- **动效**：Lenis 平滑滚动 + Card-Deck 卡片堆叠 + 详情页滚动分步，全部只动 `transform` / `opacity`，`prefers-reduced-motion` 与移动端自动降级
 - **安全**：Markdown 两层过滤 + CSP 收紧到 `self` + 登录按 IP 限流 + 真实 HTTP 状态码
 
 ---
@@ -90,14 +94,15 @@
 | 层 | 选型 | 为什么 |
 |---|---|---|
 | 前端 | Vue 3 Composition API + TypeScript + Vite | 组件化够用、构建快；不用 UI 框架，页面是手写 CSS |
-| 路由 | Vue Router 4 | 5 条路由 + 一条全局守卫，`createWebHistory` |
+| 路由 | Vue Router 4 | 6 条路由 + 一条全局守卫，`createWebHistory` |
+| 动效 | GSAP + ScrollTrigger + Lenis | 只在桌面端且未开启"减少动态效果"时初始化，参数抽成纯函数有单测 |
 | 请求 | Axios | 一个实例 + 两个拦截器：注入 token、剥响应壳、401 清理 |
 | 渲染 | markdown-it → highlight.js → DOMPurify | 先禁用原始 HTML，渲染完再清洗一遍 |
 | 后端 | NestJS 11 + TypeORM 0.3 | 模块 / 守卫 / 拦截器 / 管道齐全，约束天然落位 |
 | 数据库 | MySQL 8.0（utf8mb4） | `post` 一张表，标签用 JSON 列 + `JSON_CONTAINS` |
 | 鉴权 | JWT（passport-jwt）+ bcrypt(cost 12) | 无会话、无用户表，单管理员从环境变量注入 |
 | 校验 | class-validator + class-transformer | DTO 白名单，多余字段直接 400 |
-| 测试 | Jest + supertest | 接口测试打在真实 MySQL 上，而不是 mock 掉仓储 |
+| 测试 | Jest + supertest、Vitest | 接口测试打在真实 MySQL 上而不是 mock 仓储；前端用 Vitest 覆盖动效参数这类纯函数 |
 | 部署 | Nginx + systemd + GitHub Actions | 静态托管 + `/api` 反代；发布脚本在服务器上跑 |
 
 运行时只依赖 Node 22 + MySQL，**前端不加载任何远程字体、脚本或样式**，所以 CSP 能收到 `default-src 'self'`。
@@ -151,10 +156,14 @@ Post.vue → api/post.ts → axios(/api/posts/2)
 
 ```
 frontend/                    Vue 3 前端
-├── src/views/               5 个页面：Home / BlogList / Post / Login / AdminEdit
+├── src/views/               6 个页面：Home / WorkDetail / BlogList / Post / Login / AdminEdit
 ├── src/api/                 request.ts（拦截器）+ post.ts（接口函数）
-├── src/data/projects.ts     ★ 作品集数据：定位、联系方式、项目卡片都在这里
+├── src/components/          ProjectVisual（共享视觉）+ work-visuals/（核心动效注册表）
+├── src/composables/         useSmoothScroll（Lenis）+ useStepProgress（滚动分步）
+├── src/data/projects.ts     ★ 首页作品集数据：定位、联系方式、项目卡片摘要
+├── src/data/works/          项目详情数据（显式注册表 Record<id, WorkDetail>）
 ├── src/utils/markdown.ts    Markdown 安全渲染（markdown-it + highlight.js + DOMPurify）
+├── src/utils/deck.ts        卡片堆叠参数（纯函数，deck.spec.ts 覆盖）
 ├── src/styles/main.css      手写样式（无 UI 框架）
 └── vite.config.ts           /api 开发代理
 
@@ -267,7 +276,7 @@ npm run dev                # http://localhost:5173
 
 ## 已知限制
 
-- **前端还没有自动化测试**：后端接口测试已落地（`npm test`，跑真实 MySQL），前端仍靠上面的手工清单
+- **前端只有纯函数单测**：动效参数（`utils/deck.ts`）有 Vitest 覆盖，组件级测试与视觉回归仍靠上面的手工清单
 - **单点部署**：一台 ECS，无负载均衡与多副本；数据库与站点同机
 - **无多端冲突检测**：两个标签页同时编辑同一篇文章，后保存的覆盖先保存的
 - **token 不可撤销**：退出登录只删浏览器里的 token；泄漏时需轮换 `JWT_SECRET`，改管理员密码不会吊销已签发 token
@@ -279,7 +288,7 @@ npm run dev                # http://localhost:5173
 
 ## 后续计划
 
-- [ ] **前端测试**：Vitest + Testing Library 覆盖登录、草稿流转、标签筛选；后端继续补并发与边界用例
+- [ ] **前端组件测试**：Vitest + Testing Library 覆盖登录、草稿流转、标签筛选与详情页 404 态；后端继续补并发与边界用例
 - [ ] **后台域名上线**：`adm.zrocks.me` 证书 + `.htpasswd` 凭据，按 [deploy/deploy.md](deploy/deploy.md) §5.2 切换
 - [ ] **HSTS**：确认 HTTPS 稳定后开启
 - [ ] **SEO**：`meta description`、Open Graph、`sitemap.xml`、文章页预渲染

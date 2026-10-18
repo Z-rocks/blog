@@ -1,20 +1,30 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
+import { gsap } from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { getPosts } from "../api/post";
+import ProjectVisual from "../components/ProjectVisual.vue";
+import { onSmoothScroll } from "../composables/useSmoothScroll";
 import { profile, projects } from "../data/projects";
+import { deckState } from "../utils/deck";
 import type { PostSummary } from "../types";
+
+gsap.registerPlugin(ScrollTrigger);
 
 const posts = ref<PostSummary[]>([]);
 const loading = ref<boolean>(true);
 const error = ref<string>("");
-const expanded = ref<string | null>(null);
 // 卡片序号与总数都由 projects 推导，新增作品时不必再改模板。
 const projectCount = String(projects.length).padStart(2, "0");
-// 手机卡片里的课表格子：7 列（周一至周日）× 4 行，1 表示有课。
-const phoneCells = [
-  0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0,
-  0, 1, 0,
-];
+// 只有"小屏 + 允许动效"时才给卡片加入场类名，避免 resize 后卡片停在透明态。
+const motionOn = ref<boolean>(false);
+
+const pad = (value: number): string => String(value).padStart(2, "0");
+
+let deckMedia: ReturnType<typeof gsap.matchMedia> | null = null;
+let unsubscribeScroll: (() => void) | null = null;
+let observer: IntersectionObserver | null = null;
+
 async function loadPosts(): Promise<void> {
   loading.value = true;
   error.value = "";
@@ -35,7 +45,99 @@ function formatDate(value: string): string {
     })
     .replaceAll("/", ".");
 }
-onMounted(loadPosts);
+
+/** 桌面端：逐张 pin + 前一张缩小下压，参数统一来自 utils/deck.ts。 */
+function buildDeck(): void {
+  const cards = gsap.utils.toArray<HTMLElement>(".deck-card");
+  if (cards.length < 2) return;
+  const last = cards[cards.length - 1];
+  cards.forEach((card, index): void => {
+    if (card === last) return; // 最后一张不 pin，它负责垫底
+    ScrollTrigger.create({
+      trigger: card,
+      // 站点头部 sticky 高 84px，钉在 top: 0 会被压住
+      start: "top 84px",
+      endTrigger: last,
+      end: "top 84px",
+      pin: true,
+      pinSpacing: false, // 否则每张卡各撑一屏，总长又变回 400vh
+      invalidateOnRefresh: true,
+    });
+    const { scale, opacity } = deckState(index, cards.length);
+    gsap.to(card, {
+      scale,
+      opacity,
+      ease: "none",
+      scrollTrigger: {
+        trigger: card,
+        start: "top 84px",
+        endTrigger: last,
+        end: "top 84px",
+        scrub: true,
+      },
+    });
+  });
+  ScrollTrigger.refresh();
+}
+
+/** 小屏入场交给 IntersectionObserver + CSS，桌面端由 GSAP 独占，两边不同时生效。 */
+function observeCards(): void {
+  if (
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+    !window.matchMedia("(max-width: 800px)").matches
+  ) {
+    return;
+  }
+  motionOn.value = true;
+  observer = new IntersectionObserver(
+    (entries): void => {
+      entries.forEach((entry): void => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add("is-inview");
+        observer?.unobserve(entry.target);
+      });
+    },
+    { rootMargin: "0px 0px -12% 0px" },
+  );
+  document
+    .querySelectorAll<HTMLElement>(".deck-card")
+    .forEach((element): void => observer?.observe(element));
+}
+
+onMounted((): void => {
+  void loadPosts();
+  unsubscribeScroll = onSmoothScroll((): void => ScrollTrigger.update());
+
+  deckMedia = gsap.matchMedia();
+  // 没有 matchMedia 包裹的 GSAP 代码会在"减少动态效果"下照旧播放，视为 bug。
+  deckMedia.add(
+    "(min-width: 801px) and (prefers-reduced-motion: no-preference)",
+    buildDeck,
+  );
+  // Hero 只动代码窗：h1 是 LCP 元素，首帧必须可见。
+  deckMedia.add("(prefers-reduced-motion: no-preference)", (): void => {
+    const lines = gsap.utils.toArray<HTMLElement>(".code-body .code-line");
+    if (!lines.length) return;
+    gsap.from(lines, {
+      opacity: 0,
+      x: -6,
+      duration: 0.35,
+      stagger: 0.07,
+      ease: "power2.out",
+    });
+  });
+  observeCards();
+});
+
+onBeforeUnmount((): void => {
+  observer?.disconnect();
+  observer = null;
+  unsubscribeScroll?.();
+  unsubscribeScroll = null;
+  deckMedia?.revert();
+  deckMedia = null;
+  ScrollTrigger.getAll().forEach((trigger): void => trigger.kill());
+});
 </script>
 
 <template>
@@ -177,137 +279,47 @@ onMounted(loadPosts);
           >PROJECTS <span class="count-pill">{{ projectCount }}</span></span
         >
       </div>
-      <div class="project-grid">
+      <div class="deck" :class="{ 'is-motion': motionOn }">
         <article
           v-for="(project, index) in projects"
           :key="project.id"
-          class="project-card"
+          class="deck-card"
         >
-          <div
-            class="project-visual"
-            :class="`visual-${project.visual}`"
-            aria-hidden="true"
+          <RouterLink
+            class="deck-link"
+            :to="`/work/${project.id}`"
+            :aria-label="`查看 ${project.name} 案例`"
           >
-            <span class="visual-index">0{{ index + 1 }} /</span
-            ><span class="project-status">{{
-              project.placeholder ? "项目占位" : "当前项目"
-            }}</span>
-            <div v-if="project.visual === 'browser'" class="mini-browser">
-              <div class="mini-browser-bar">
-                <i></i><i></i><i></i><span>dev.log /</span>
-              </div>
-              <div class="mini-browser-content">
-                <span class="mini-brand">DEV.LOG<span>↗</span></span
-                ><strong>Ideas into<br /><em>reality.</em></strong>
-                <div class="mini-text-line"></div>
-                <div class="mini-button">Explore work ↗</div>
-                <div class="mini-blocks"><i></i><i></i><i></i></div>
-              </div>
-              <span class="mini-code">&lt;/&gt;</span>
+            <div class="deck-meta">
+              <span class="deck-index"
+                >{{ pad(index + 1) }} / {{ pad(projects.length) }}</span
+              >
+              <span class="deck-category">{{ project.category }}</span>
             </div>
-            <div v-else-if="project.visual === 'flow'" class="flow-graphic">
-              <span class="flow-box">▱<small>REQUEST</small></span
-              ><span class="flow-line"></span
-              ><span class="flow-center">⑂<small>SERVICE</small></span
-              ><span class="flow-line"></span
-              ><span class="flow-box">✓<small>COMMIT</small></span
-              ><span class="flow-caption">THINK. DESIGN. BUILD.</span>
-            </div>
-            <div v-else-if="project.visual === 'mobile'" class="mini-phone">
-              <div class="phone-status">
-                <span>第 6 周</span><i class="phone-battery"></i>
-              </div>
-              <div class="phone-grid">
-                <span
-                  v-for="(cell, cellIndex) in phoneCells"
-                  :key="cellIndex"
-                  class="phone-cell"
-                  :class="{ 'is-on': cell === 1 }"
-                ></span>
-              </div>
-              <div class="phone-dock">
-                <i></i><i class="is-active"></i><i></i>
-              </div>
-            </div>
-            <div v-else class="mini-terminal">
-              <div class="terminal-top">
-                <span>&gt;_</span><span>~/workspace/toolbox</span><span>—</span>
-              </div>
-              <div class="terminal-lines">
-                <p><span>❯</span> npm run build:ideas</p>
-                <p class="terminal-muted">Turning coffee into code...</p>
-                <p><span>✓</span> Think. Build. Improve.</p>
-                <p><span>✓</span> Make something useful.</p>
-                <p><span>❯</span> <i></i></p>
-              </div>
-            </div>
-          </div>
-          <div class="project-copy">
-            <span class="project-category">{{ project.category }}</span
-            ><button
-              class="project-title"
-              :aria-expanded="expanded === project.id"
-              :aria-controls="`project-${project.id}`"
-              @click="expanded = expanded === project.id ? null : project.id"
-            >
+            <ProjectVisual
+              :visual="project.visual"
+              :status="project.placeholder ? '项目占位' : '当前项目'"
+            />
+            <div class="deck-copy">
               <h3>{{ project.name }}</h3>
-              <span aria-hidden="true">{{
-                expanded === project.id ? "−" : "↗"
-              }}</span>
-            </button>
-            <p>{{ project.description }}</p>
-            <div class="tag-list">
-              <span v-for="tag in project.tags" :key="tag" class="tag">{{
-                tag
-              }}</span>
-            </div>
-            <div
-              v-if="expanded === project.id"
-              :id="`project-${project.id}`"
-              class="project-details"
-            >
-              <h4>项目亮点 / 完善方向</h4>
-              <ul>
+              <p class="deck-desc">{{ project.description }}</p>
+              <ul class="deck-highlights">
                 <li v-for="item in project.highlights" :key="item">
                   {{ item }}
                 </li>
               </ul>
-              <a
-                v-if="project.links.source"
-                :href="project.links.source"
-                target="_blank"
-                rel="noopener noreferrer"
-                >查看源码 ↗</a
-              ><a
-                v-if="project.links.mirror"
-                :href="project.links.mirror"
-                target="_blank"
-                rel="noopener noreferrer"
-                >镜像仓库 ↗</a
-              ><a
-                v-if="project.links.release"
-                :href="project.links.release"
-                target="_blank"
-                rel="noopener noreferrer"
-                >下载安装包 ↗</a
-              ><a
-                v-if="project.links.demo"
-                :href="project.links.demo"
-                target="_blank"
-                rel="noopener noreferrer"
-                >在线体验 ↗</a
-              ><span
-                v-if="
-                  !project.links.source &&
-                  !project.links.mirror &&
-                  !project.links.release &&
-                  !project.links.demo
-                "
-                class="muted"
-                >项目链接待补充</span
-              >
+              <div class="deck-foot">
+                <div class="tag-list">
+                  <span v-for="tag in project.tags" :key="tag" class="tag">{{
+                    tag
+                  }}</span>
+                </div>
+                <span class="deck-cta"
+                  >查看案例 <span aria-hidden="true">↗</span></span
+                >
+              </div>
             </div>
-          </div>
+          </RouterLink>
         </article>
       </div>
     </section>
