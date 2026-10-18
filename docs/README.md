@@ -27,7 +27,8 @@
 | [DEVELOPMENT.md](DEVELOPMENT.md) | 环境要求、数据库初始化、`.env` 全量说明、启动、常用脚本、调试技巧、手工验收清单、常见问题 | 开发者 |
 | [API.md](API.md) | 响应格式与状态码、鉴权约定、8 个接口的参数 / 校验 / 响应 / 错误、完整 curl 示例 | 前端 / 调用方 |
 | [SECURITY.md](SECURITY.md) | 威胁模型、XSS 两层过滤、CSP、令牌设计、限流、校验、已知缺口、上线检查表 | 评审 / 运维 |
-| [002-portfolio-motion-plan.md](002-portfolio-motion-plan.md) | 作品集动效升级实施方案（Card-Deck / Lenis / Hero 动效 / 项目详情页） | 开发者 |
+| [002-portfolio-motion-plan.md](002-portfolio-motion-plan.md) | 作品集动效升级实施方案（Lenis / Hero 动效 / 项目详情页；主页 Card-Deck 部分已被 003 取代） | 开发者 |
+| [003-portfolio-track.md](003-portfolio-track.md) | 首页项目轨道：散落 → 收束 → Coverflow 聚焦的参数、纯函数、降级与实测数据 | 开发者 |
 | [001-idempotency-payment-callback.md](001-idempotency-payment-callback.md) | 文章草稿：支付回调的幂等设计（设计分析，**不是**生产事故复盘） | 读者 |
 
 ---

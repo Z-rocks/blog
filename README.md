@@ -60,12 +60,14 @@
 
 | 页面 | 内容 |
 |---|---|
-| `/` 首页 | 一句话定位、项目卡片（描述 + 三条亮点 + 技术标签 + 仓库 / 镜像 / 发布页链接）、最新三篇已发布文章 |
+| `/` 首页 | 一句话定位、项目轨道（散落 → 收束 → 水平聚焦，右侧文字层跟随）、最新三篇已发布文章 |
 | `/work/:id` 项目详情 | 问题背景 → 核心架构（滚动分步动效）→ 技术要点 → 成果与入口；未知 id 显示 404 态 |
 | `/blog` 文章列表 | 分页 + 标签筛选，**筛选状态保存在 URL 查询参数里**，刷新和分享都不丢 |
 | `/blog/:id` 文章详情 | Markdown 渲染、代码高亮、加载 / 失败 / 404 状态 |
 
 项目卡片的数据全在 `frontend/src/data/projects.ts`：姓名、定位、联系方式、每个项目的名称 / 描述 / 亮点 / 标签 / 外链都在这里维护。卡片序号与总数由数组长度推导，新增作品只需追加一项；空链接不会渲染成不可用按钮。`visual` 字段决定卡片视觉（`browser` / `terminal` / `flow` / `mobile`），四种视觉统一由 `--vs` 与 `--visual-h` 两个变量控制缩放，断点只改变量、不覆写 `transform`。
+
+首页项目区是一段 pin 住的滚动编排（`utils/track.ts`）：进段时四张卡从中心炸开、散到四周，随后收拢成一排，最后逐张经过左侧聚焦线；右侧文字层同步显示当前聚焦项目的标题与简介，切换用「淡出 → 间隙 → 淡入」。整卡可点进详情页，悬停时上浮并露出「查看案例」。窄屏与「减少动态效果」下这段编排完全不启动，直接退化成两列（≤540px 为一列）的普通卡片，标题与描述常显。
 
 项目详情的数据在 `frontend/src/data/works/`，用显式注册表 `Record<id, WorkDetail>` 组织：新增一个案例就加一个文件与一行登记，漏写会被 `vue-tsc` 拦下。首页卡片只放摘要，深度内容全在详情页。
 
@@ -84,7 +86,7 @@
 - **CI**：三条流水线——PR 门禁（类型检查 + 两端构建 + 后端接口测试）、发布流程、安全扫描（依赖审计 + CodeQL），校验命令只有 [`scripts/verify.sh`](scripts/verify.sh) 一份
 - **版本化发布**：`/var/www/devlog-releases/<版本ID>/` + 软链接，一条命令回滚到任意历史版本
 - **测试**：后端参数化接口测试（Jest + supertest）跑在**真实 MySQL** 上，覆盖草稿泄漏、正文外泄、标签匹配、鉴权与 DTO 校验；前端对动效参数做纯函数单测（Vitest）
-- **动效**：Lenis 平滑滚动 + Card-Deck 卡片堆叠 + 详情页滚动分步，全部只动 `transform` / `opacity`，`prefers-reduced-motion` 与移动端自动降级
+- **动效**：Lenis 平滑滚动 + 首页项目轨道（爆炸散落 → 收束 → 水平聚焦 + 右侧文字层）+ 详情页滚动分步，全部只动 `transform` / `opacity`，`prefers-reduced-motion` 与移动端自动降级
 - **安全**：Markdown 两层过滤 + CSP 收紧到 `self` + 登录按 IP 限流 + 真实 HTTP 状态码
 
 ---
@@ -163,7 +165,7 @@ frontend/                    Vue 3 前端
 ├── src/data/projects.ts     ★ 首页作品集数据：定位、联系方式、项目卡片摘要
 ├── src/data/works/          项目详情数据（显式注册表 Record<id, WorkDetail>）
 ├── src/utils/markdown.ts    Markdown 安全渲染（markdown-it + highlight.js + DOMPurify）
-├── src/utils/deck.ts        卡片堆叠参数（纯函数，deck.spec.ts 覆盖）
+├── src/utils/track.ts       项目轨道几何：散落 / 收束 / Coverflow 景深（纯函数，track.spec.ts 覆盖）
 ├── src/styles/main.css      手写样式（无 UI 框架）
 └── vite.config.ts           /api 开发代理
 

@@ -186,7 +186,7 @@ src/
 ├── types/index.ts     全部类型定义
 ├── utils/
 │   ├── markdown.ts    安全渲染
-│   └── deck.ts        卡片堆叠参数（纯函数，有单测）
+│   └── track.ts       项目轨道的散落 / 收束 / 景深几何（纯函数，有单测）
 └── styles/main.css    手写样式（含响应式与深色代码块主题）
 ```
 
@@ -220,7 +220,9 @@ src/
   `gsap.matchMedia()` 包裹——`(min-width: 801px)` 且 `(prefers-reduced-motion: no-preference)`
   才建时间线，其余情况内容直接可见。
 - 只动 `transform` / `opacity`；`h1` 是 LCP 元素，不做入场动画。
-- 卡片堆叠的缩放与透明度由 `utils/deck.ts` 的纯函数给出，GSAP 与单测共用同一份参数。
+- 首页项目轨道的三段（散落 → 收束 → 水平聚焦）全部由 `utils/track.ts` 的纯函数按进度算出，
+  GSAP 只负责 pin 与把得到的 `CardFrame` 写进 style——滚动过程中不读 DOM，也不触发排版。
+- 右侧文字层的切换是「淡出 → 180ms 间隙 → 换内容 → 淡入」，只在这一段滚动里出现。
 
 > 前端守卫只改善体验，**不构成安全边界**。真正的鉴权在后端每个写接口的 `JwtAuthGuard` 上。
 

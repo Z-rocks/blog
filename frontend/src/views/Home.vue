@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from "vue";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { getPosts } from "../api/post";
 import ProjectVisual from "../components/ProjectVisual.vue";
 import { onSmoothScroll } from "../composables/useSmoothScroll";
 import { profile, projects } from "../data/projects";
-import { deckState } from "../utils/deck";
+import { TRACK_PHASES, focusIndexAt, trackFrame } from "../utils/track";
+import type { TrackMetrics } from "../utils/track";
 import type { PostSummary } from "../types";
 
 gsap.registerPlugin(ScrollTrigger);
@@ -16,14 +17,36 @@ const loading = ref<boolean>(true);
 const error = ref<string>("");
 // 卡片序号与总数都由 projects 推导，新增作品时不必再改模板。
 const projectCount = String(projects.length).padStart(2, "0");
-// 只有"小屏 + 允许动效"时才给卡片加入场类名，避免 resize 后卡片停在透明态。
-const motionOn = ref<boolean>(false);
+
+// 轨道模式只在"桌面 + 允许动效"时开启；其余情况就是一组普通卡片。
+const enhanced = ref<boolean>(false);
+// 文字层：is-visible 表示处在横移阶段，is-in 表示当前内容已淡入完成。
+const copyShown = ref<boolean>(false);
+const copyIn = ref<boolean>(true);
+const copyIndex = ref<number>(0);
+const current = computed(
+  () => projects[Math.min(copyIndex.value, projects.length - 1)],
+);
+
+const stage = useTemplateRef<HTMLElement>("stage");
+
+let media: ReturnType<typeof gsap.matchMedia> | null = null;
+let unsubscribeScroll: (() => void) | null = null;
+let swapTimer = 0;
+let pendingIndex = -1;
+let cardEls: HTMLElement[] = [];
+let lastProgress = 0;
+let hoverIndex = -1;
+let metrics: TrackMetrics = {
+  width: 0,
+  height: 0,
+  pitch: 600,
+  cardWidth: 480,
+  cardHeight: 317,
+  focusX: 0,
+};
 
 const pad = (value: number): string => String(value).padStart(2, "0");
-
-let deckMedia: ReturnType<typeof gsap.matchMedia> | null = null;
-let unsubscribeScroll: (() => void) | null = null;
-let observer: IntersectionObserver | null = null;
 
 async function loadPosts(): Promise<void> {
   loading.value = true;
@@ -46,76 +69,149 @@ function formatDate(value: string): string {
     .replaceAll("/", ".");
 }
 
-/** 桌面端：逐张 pin + 前一张缩小下压，参数统一来自 utils/deck.ts。 */
-function buildDeck(): void {
-  const cards = gsap.utils.toArray<HTMLElement>(".deck-card");
-  if (cards.length < 2) return;
-  const last = cards[cards.length - 1];
-  cards.forEach((card, index): void => {
-    if (card === last) return; // 最后一张不 pin，它负责垫底
-    ScrollTrigger.create({
-      trigger: card,
-      // 站点头部 sticky 高 84px，钉在 top: 0 会被压住
-      start: "top 84px",
-      endTrigger: last,
-      end: "top 84px",
-      pin: true,
-      pinSpacing: false, // 否则每张卡各撑一屏，总长又变回 400vh
-      invalidateOnRefresh: true,
-    });
-    const { scale, opacity } = deckState(index, cards.length);
-    gsap.to(card, {
-      scale,
-      opacity,
-      ease: "none",
-      scrollTrigger: {
-        trigger: card,
-        start: "top 84px",
-        endTrigger: last,
-        end: "top 84px",
-        scrub: true,
-      },
-    });
-  });
-  ScrollTrigger.refresh();
+/** 只量一次尺寸，滚动过程中不再读 DOM，避免每帧强制排版。 */
+function measure(element: HTMLElement): TrackMetrics {
+  const width = element.clientWidth || 1180;
+  const height = element.clientHeight || window.innerHeight - 84;
+  const cardWidth = Math.round(Math.min(480, Math.max(300, width * 0.36)));
+  const cardHeight = Math.round(cardWidth * 0.66);
+  const gap = Math.round(Math.min(120, width * 0.08));
+  element.style.setProperty("--track-card-w", `${cardWidth}px`);
+  element.style.setProperty("--track-card-h", `${cardHeight}px`);
+  return {
+    width,
+    height,
+    cardWidth,
+    cardHeight,
+    pitch: cardWidth + gap,
+    focusX: width * 0.38,
+  };
 }
 
-/** 小屏入场交给 IntersectionObserver + CSS，桌面端由 GSAP 独占，两边不同时生效。 */
-function observeCards(): void {
-  if (
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
-    !window.matchMedia("(max-width: 800px)").matches
-  ) {
-    return;
-  }
-  motionOn.value = true;
-  observer = new IntersectionObserver(
-    (entries): void => {
-      entries.forEach((entry): void => {
-        if (!entry.isIntersecting) return;
-        entry.target.classList.add("is-inview");
-        observer?.unobserve(entry.target);
-      });
-    },
-    { rootMargin: "0px 0px -12% 0px" },
+/** 文字层换页：先淡出 → 180ms 间隙 → 换内容 → 淡入。 */
+function requestFocus(next: number): void {
+  if (next === pendingIndex) return;
+  pendingIndex = next;
+  if (next === copyIndex.value && copyIn.value) return;
+  copyIn.value = false;
+  if (swapTimer) return; // 已在间隙里，等它落地时读最新的 pendingIndex
+  swapTimer = window.setTimeout((): void => {
+    swapTimer = 0;
+    copyIndex.value = Math.min(pendingIndex, projects.length - 1);
+    copyIn.value = true;
+  }, 180);
+}
+
+function render(progress: number): void {
+  if (!cardEls.length) return;
+  lastProgress = progress;
+  cardEls.forEach((card, index): void => {
+    const frame = trackFrame(progress, index, cardEls.length, metrics);
+    // 悬停上浮只能在这里加：卡片 transform 由 JS 独占，CSS 再写会被覆盖。
+    const lift = index === hoverIndex ? -8 : 0;
+    card.style.transform =
+      `translate3d(calc(-50% + ${frame.x.toFixed(1)}px), calc(-50% + ${(frame.y + lift).toFixed(1)}px), ${frame.z.toFixed(1)}px) ` +
+      `rotateY(${frame.rotateY.toFixed(2)}deg) rotate(${frame.rotate.toFixed(2)}deg) scale(${frame.scale.toFixed(3)})`;
+    card.style.opacity = frame.opacity.toFixed(3);
+    card.style.zIndex = String(200 - Math.round(Math.abs(frame.z)));
+    // 发光用一个类开关 + CSS 过渡：卡片 overflow: hidden 会把内部光晕裁掉，
+    // 逐帧写 box-shadow 又是绘制很贵的属性。
+    card.classList.toggle("is-focus", frame.glow > 0.45);
+  });
+
+  // 进度是浮点采样，收束点附近留一点余量，避免正好卡在阈值上时文字层不出现。
+  const inTravel = progress >= TRACK_PHASES.collapseEnd - 0.01;
+  copyShown.value = inTravel;
+  if (inTravel) requestFocus(focusIndexAt(progress, cardEls.length));
+}
+
+function onPointerOver(event: PointerEvent): void {
+  // 触屏没有 hover，别让 tap 残留一个"悬停"状态。
+  if (!window.matchMedia("(hover: hover)").matches) return;
+  const card = (event.target as HTMLElement).closest<HTMLElement>(".track-card");
+  const next = card ? Number(card.dataset.index) : -1;
+  const resolved = Number.isFinite(next) ? next : -1;
+  if (resolved === hoverIndex) return;
+  hoverIndex = resolved;
+  render(lastProgress);
+}
+
+function onPointerLeave(): void {
+  if (hoverIndex === -1) return;
+  hoverIndex = -1;
+  render(lastProgress);
+}
+
+function setupTrack(element: HTMLElement): () => void {
+  element.classList.add("is-enhanced");
+  enhanced.value = true;
+  cardEls = Array.from(
+    element.querySelectorAll<HTMLElement>(".track-card"),
   );
-  document
-    .querySelectorAll<HTMLElement>(".deck-card")
-    .forEach((element): void => observer?.observe(element));
+  element.addEventListener("pointerover", onPointerOver);
+  element.addEventListener("pointerleave", onPointerLeave);
+  metrics = measure(element);
+  render(0);
+
+  const trigger = ScrollTrigger.create({
+    trigger: element,
+    // 站点头部 sticky 高 84px，钉在 top: 0 会被压住
+    start: "top 84px",
+    end: (): string => `+=${Math.round(window.innerHeight * 3)}`,
+    pin: true,
+    anticipatePin: 1,
+    invalidateOnRefresh: true,
+    onRefreshInit: (): void => {
+      metrics = measure(element);
+    },
+    onRefresh: (self): void => {
+      metrics = measure(element);
+      render(self.progress);
+    },
+    onUpdate: (self): void => {
+      render(self.progress);
+    },
+  });
+
+  return (): void => {
+    trigger.kill();
+    element.removeEventListener("pointerover", onPointerOver);
+    element.removeEventListener("pointerleave", onPointerLeave);
+    element.classList.remove("is-enhanced");
+    enhanced.value = false;
+    copyShown.value = false;
+    copyIn.value = true;
+    pendingIndex = -1;
+    hoverIndex = -1;
+    if (swapTimer) window.clearTimeout(swapTimer);
+    swapTimer = 0;
+    // 清掉内联几何，回到静态栅格。
+    cardEls.forEach((card): void => {
+      card.classList.remove("is-focus");
+      card.style.transform = "";
+      card.style.opacity = "";
+      card.style.zIndex = "";
+    });
+    cardEls = [];
+  };
 }
 
 onMounted((): void => {
   void loadPosts();
   unsubscribeScroll = onSmoothScroll((): void => ScrollTrigger.update());
 
-  deckMedia = gsap.matchMedia();
+  media = gsap.matchMedia();
   // 没有 matchMedia 包裹的 GSAP 代码会在"减少动态效果"下照旧播放，视为 bug。
-  deckMedia.add(
+  media.add(
     "(min-width: 801px) and (prefers-reduced-motion: no-preference)",
-    buildDeck,
+    (): (() => void) | void => {
+      const element = stage.value;
+      if (!element) return;
+      return setupTrack(element);
+    },
   );
   // Hero 只动代码窗：h1 是 LCP 元素，首帧必须可见。
-  deckMedia.add("(prefers-reduced-motion: no-preference)", (): void => {
+  media.add("(prefers-reduced-motion: no-preference)", (): void => {
     const lines = gsap.utils.toArray<HTMLElement>(".code-body .code-line");
     if (!lines.length) return;
     gsap.from(lines, {
@@ -126,16 +222,15 @@ onMounted((): void => {
       ease: "power2.out",
     });
   });
-  observeCards();
 });
 
 onBeforeUnmount((): void => {
-  observer?.disconnect();
-  observer = null;
   unsubscribeScroll?.();
   unsubscribeScroll = null;
-  deckMedia?.revert();
-  deckMedia = null;
+  media?.revert();
+  media = null;
+  if (swapTimer) window.clearTimeout(swapTimer);
+  swapTimer = 0;
   ScrollTrigger.getAll().forEach((trigger): void => trigger.kill());
 });
 </script>
@@ -273,54 +368,61 @@ onBeforeUnmount((): void => {
         <div>
           <span class="eyebrow">01 / SELECTED WORK</span>
           <h2>不止于想法<span class="heading-dot">.</span></h2>
-          <p>一些认真构建的作品，以及它们背后的思考。</p>
+          <p>滚动看它们在空间里散开、收拢，再逐张经过聚焦线。</p>
         </div>
         <span class="section-aside"
           >PROJECTS <span class="count-pill">{{ projectCount }}</span></span
         >
       </div>
-      <div class="deck" :class="{ 'is-motion': motionOn }">
-        <article
-          v-for="(project, index) in projects"
-          :key="project.id"
-          class="deck-card"
-        >
-          <RouterLink
-            class="deck-link"
-            :to="`/work/${project.id}`"
-            :aria-label="`查看 ${project.name} 案例`"
+      <div
+        ref="stage"
+        class="track-stage"
+        :class="{ 'is-enhanced': enhanced, 'is-tracking': copyShown }"
+      >
+        <div class="track-layer">
+          <article
+            v-for="(project, index) in projects"
+            :key="project.id"
+            class="track-card"
+            :data-index="index"
           >
-            <div class="deck-meta">
-              <span class="deck-index"
-                >{{ pad(index + 1) }} / {{ pad(projects.length) }}</span
-              >
-              <span class="deck-category">{{ project.category }}</span>
-            </div>
-            <ProjectVisual
-              :visual="project.visual"
-              :status="project.placeholder ? '项目占位' : '当前项目'"
-            />
-            <div class="deck-copy">
-              <h3>{{ project.name }}</h3>
-              <p class="deck-desc">{{ project.description }}</p>
-              <ul class="deck-highlights">
-                <li v-for="item in project.highlights" :key="item">
-                  {{ item }}
-                </li>
-              </ul>
-              <div class="deck-foot">
-                <div class="tag-list">
-                  <span v-for="tag in project.tags" :key="tag" class="tag">{{
-                    tag
-                  }}</span>
-                </div>
-                <span class="deck-cta"
+            <RouterLink
+              class="track-link"
+              :to="`/work/${project.id}`"
+              :aria-label="`查看 ${project.name} 案例（${pad(index + 1)} / ${pad(projects.length)}）`"
+            >
+              <ProjectVisual
+                :visual="project.visual"
+                :status="project.placeholder ? '项目占位' : '当前项目'"
+              />
+              <div class="track-card-copy">
+                <span class="track-card-index"
+                  >{{ pad(index + 1) }} / {{ pad(projects.length) }}</span
+                >
+                <h3>{{ project.name }}</h3>
+                <p class="track-card-desc">{{ project.description }}</p>
+                <span class="track-card-cta"
                   >查看案例 <span aria-hidden="true">↗</span></span
                 >
               </div>
-            </div>
-          </RouterLink>
-        </article>
+            </RouterLink>
+          </article>
+        </div>
+        <div class="track-scrim" aria-hidden="true"></div>
+        <div
+          class="track-copy"
+          :class="{ 'is-visible': copyShown, 'is-in': copyShown && copyIn }"
+          aria-live="off"
+        >
+          <span class="eyebrow">{{ current.category }}</span>
+          <h3>{{ current.name }}</h3>
+          <p>{{ current.description }}</p>
+          <div class="track-copy-tags">
+            <span v-for="tag in current.tags" :key="tag" class="tag">{{
+              tag
+            }}</span>
+          </div>
+        </div>
       </div>
     </section>
     <section class="section-block articles-section">

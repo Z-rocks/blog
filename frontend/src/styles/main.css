@@ -2627,224 +2627,250 @@ textarea {
     padding-inline: 12px;
   }
 }
-/* ===== 作品集：卡片堆叠（桌面）/ 紧凑栅格（移动） ===== */
-.deck {
+/* ===== 作品集：爆炸散落 → 收束 → Coverflow 水平聚焦 ===== */
+
+/* 静态形态（移动端 / 减少动态效果）：普通栅格，卡片自带标题与描述。
+   只有 JS 打开 .is-enhanced 时才进入轨道模式，JS 不参与也不会白屏。 */
+.track-stage {
   position: relative;
+  margin-top: 4px;
+}
+.track-layer {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 24px;
   align-items: start;
 }
-.deck-card {
-  /* 必须显式定位：pin 会把当前卡变成 position: fixed，
-     而定位元素绘制在静态元素之上——不给后面的卡定位，"后一张压上来"会反成"钻到下面去"。
-     都处于 position 定位层后，绘制顺序回到 DOM 顺序，后面的卡自然覆盖前面的卡。 */
+.track-card {
   position: relative;
   border: 1px solid var(--card-border);
-  background: var(--card-bg);
   border-radius: var(--card-radius);
+  background: var(--card-bg);
   box-shadow: var(--card-shadow-rest);
   overflow: hidden;
   transition:
     border-color 0.2s ease,
     box-shadow 0.2s ease;
 }
-.deck-card:hover {
+.track-card:hover {
   border-color: #bbc9a7;
 }
-.deck-link {
+.track-link {
   display: flex;
   flex-direction: column;
   height: 100%;
   color: inherit;
   text-decoration: none;
 }
-.deck-link:focus-visible {
+.track-link:focus-visible {
   outline: 2px solid var(--green);
-  outline-offset: 4px;
+  outline-offset: 3px;
 }
-.deck-meta {
+.track-card-copy {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px 16px;
 }
-.deck-index {
-  font-family: var(--display);
-  font-size: 13px;
-  letter-spacing: 0.08em;
-  color: #8b9381;
-  white-space: nowrap;
-}
-.deck-category {
+.track-card-index {
   font-family: var(--mono);
   font-size: 9px;
   letter-spacing: 0.12em;
-  color: #8e9780;
-  text-align: right;
+  color: #8b9381;
 }
-.deck-copy {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-}
-.deck-copy h3 {
+.track-card-copy h3 {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
   letter-spacing: -0.01em;
 }
-.deck-desc {
+.track-card-desc {
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   overflow: hidden;
-  margin: 8px 0 0;
+  margin: 0;
   font-size: 11px;
   line-height: 1.9;
   color: #818978;
 }
-.deck-highlights {
-  display: none;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.deck-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: auto;
-  padding-top: 12px;
-}
-.deck-cta {
+.track-card-cta {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 9px;
-  letter-spacing: 0.04em;
+  font-size: 10px;
   color: var(--green);
-  white-space: nowrap;
+}
+.track-copy {
+  display: none;
+}
+.track-scrim {
+  display: none;
 }
 
+/* 轨道模式 */
 @media (min-width: 801px) {
-  .deck {
+  .track-stage.is-enhanced {
+    height: calc(100svh - 84px);
+    min-height: 520px;
+    overflow: hidden;
+  }
+  .track-stage.is-enhanced .track-layer {
+    position: absolute;
+    inset: 0;
     display: block;
+    perspective: 1500px;
+    perspective-origin: 38% 50%;
   }
-  .deck-card {
-    height: min(78vh, 780px);
-    height: min(78svh, 780px);
-    margin-bottom: 26px;
+  .track-stage.is-enhanced .track-card {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: var(--track-card-w, 480px);
+    height: var(--track-card-h, 317px);
+    margin: 0;
     box-shadow: var(--card-shadow-deck);
+    will-change: transform, opacity;
   }
-  .deck-card:last-child {
-    margin-bottom: 0;
+  .track-stage.is-enhanced .track-card .project-visual {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+    --vs: 0.95;
   }
-  .deck-link {
-    padding: 24px 30px 26px;
+  .track-stage.is-enhanced .track-card-copy {
+    position: relative;
+    flex: 0 0 auto;
+    gap: 2px;
+    padding: 12px 16px 14px;
+    background: var(--card-bg);
+    border-top: 1px solid #eef1e7;
   }
-  .deck .project-visual {
-    height: 46%;
-    flex: 0 0 46%;
-    margin: 14px 0 18px;
-    border-radius: 8px;
+  .track-stage.is-enhanced .track-card-copy h3 {
+    font-size: 17px;
   }
-  .deck-copy h3 {
+  .track-stage.is-enhanced .track-card-copy .track-card-index {
+    font-size: 8px;
+  }
+  .track-stage.is-enhanced .track-card-desc {
+    display: none;
+  }
+  .track-stage.is-enhanced .track-card-cta {
+    position: absolute;
+    right: 16px;
+    bottom: 14px;
+    opacity: 0;
+    transform: translateY(6px);
+    transition:
+      opacity 0.25s ease,
+      transform 0.25s ease;
+  }
+  /* 上浮由 JS 在每帧的 y 坐标里加，CSS 再写 transform 会被覆盖 */
+  .track-stage.is-enhanced .track-card:hover .track-card-cta,
+  .track-stage.is-enhanced .track-card:focus-within .track-card-cta {
+    opacity: 1;
+    transform: none;
+  }
+  /* 聚焦高光：卡片自身 overflow: hidden 会裁掉子元素的光晕，
+     而且逐帧写 box-shadow 太贵，所以用类开关 + CSS 过渡。 */
+  .track-stage.is-enhanced .track-card.is-focus {
+    box-shadow:
+      0 0 0 1px #b9cba2,
+      0 30px 70px -28px #35584466;
+  }
+  /* 横移阶段才出现的右侧渐隐：末尾几张卡经过文字层下方时被纸色吃掉，
+     文字层因此永远落在干净的底上，也不需要给它加一块生硬的底板。 */
+  .track-stage.is-enhanced .track-scrim {
+    display: block;
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 300;
+    /* 宽度跟着文字层走：右侧留出文字区 + 一段柔化过渡，左侧才是透明的 */
+    width: calc(6% + 450px);
+    background: linear-gradient(
+      to left,
+      #f7f8f3 0%,
+      #f7f8f3 calc(100% - 60px),
+      #f7f8f300 100%
+    );
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+  }
+  .track-stage.is-enhanced.is-tracking .track-scrim {
+    opacity: 1;
+  }
+  /* 右侧文字层：只承载当前聚焦项目，切换用 淡出 → 间隙 → 淡入 */
+  .track-stage.is-enhanced .track-copy {
+    display: block;
+    position: absolute;
+    z-index: 310;
+    right: 6%;
+    top: 50%;
+    width: min(300px, 26vw);
+    opacity: 0;
+    visibility: hidden;
+    filter: blur(2px);
+    transform: translateY(-50%) translateY(-15px);
+    transition:
+      opacity 0.18s ease,
+      transform 0.18s ease,
+      filter 0.18s ease,
+      visibility 0s linear 0.18s;
+    pointer-events: none;
+  }
+  .track-stage.is-enhanced .track-copy.is-visible {
+    visibility: visible;
+    transition-delay: 0s;
+  }
+  .track-stage.is-enhanced .track-copy.is-visible.is-in {
+    opacity: 1;
+    filter: none;
+    transform: translateY(-50%);
+    transition-duration: 0.22s;
+  }
+  .track-stage.is-enhanced .track-copy h3 {
+    margin: 8px 0 10px;
     font-size: 26px;
+    line-height: 1.35;
+    letter-spacing: -0.02em;
   }
-  .deck-desc {
-    max-width: 46em;
-    margin-top: 10px;
-    font-size: 13px;
-    line-height: 1.85;
+  .track-stage.is-enhanced .track-copy p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.95;
+    color: #727c69;
   }
-  .deck-highlights {
+  .track-stage.is-enhanced .track-copy-tags {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px 22px;
+    gap: 6px;
     margin-top: 14px;
-  }
-  .deck-highlights li {
-    position: relative;
-    padding-left: 11px;
-    font-size: 12px;
-    line-height: 1.75;
-    color: #6f7a66;
-  }
-  .deck-highlights li:before {
-    content: "·";
-    position: absolute;
-    left: 0;
-    color: #9aab84;
-  }
-  .deck .tag-list {
-    margin-top: 16px;
-  }
-  .deck-cta {
-    font-size: 12px;
   }
 }
 
 @media (max-width: 800px) {
-  .deck {
+  .track-layer {
     gap: 12px;
   }
-  .deck-link {
-    padding: 0;
+  .track-card-copy {
+    padding: 10px 12px 14px;
   }
-  .deck-meta {
-    padding: 10px 12px 0;
-  }
-  .deck-index {
-    font-size: 9px;
-  }
-  .deck-category {
-    font-size: 6px;
-  }
-  .deck .project-visual {
-    margin: 8px 0 10px;
-  }
-  .deck-copy {
-    padding: 0 12px 14px;
-  }
-  .deck-copy h3 {
+  .track-card-copy h3 {
     font-size: 13px;
   }
-  .deck-desc {
-    -webkit-line-clamp: 3;
-    min-height: 57px;
+  .track-card-desc {
     font-size: 10px;
     line-height: 1.8;
-  }
-  .deck-foot {
-    padding-top: 10px;
-  }
-  .deck-cta {
-    font-size: 8px;
-  }
-  /* 入场只在小屏用 CSS，桌面交给 GSAP，两边不同时生效。 */
-  .deck.is-motion .deck-card {
-    opacity: 0;
-    transform: translateY(12px);
-    transition:
-      opacity 0.3s ease,
-      transform 0.3s ease;
-  }
-  .deck.is-motion .deck-card.is-inview {
-    opacity: 1;
-    transform: none;
   }
 }
 
 @media (max-width: 540px) {
-  .deck {
+  .track-layer {
     grid-template-columns: 1fr;
     gap: 20px;
-  }
-  .deck-desc {
-    min-height: 0;
   }
 }
 
@@ -3258,14 +3284,10 @@ textarea {
     transition: none !important;
     scroll-behavior: auto !important;
   }
-  /* 桌面端 GSAP 根本不会启动，这里只兜住"残留变换"这一种可能；
+  /* 桌面端 GSAP 根本不会启动（.is-enhanced 不会加上），这里只兜住"残留变换"；
      插件三步 / 分步流程由 data-step 属性驱动，取消过渡后自然落到最终态。 */
-  .deck-card {
+  .track-card {
     opacity: 1 !important;
     transform: none !important;
-  }
-  .deck.is-motion .deck-card {
-    opacity: 1;
-    transform: none;
   }
 }
